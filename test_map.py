@@ -16,8 +16,8 @@ from streamlit_folium import st_folium
 # FILE PATHS
 # ==========================================================
 
-excel_file = r"SNAP_Bivariate _Classification_Dataset.xlsx"
-shapefile = r"cb_2023_37_tract_500k\cb_2023_37_tract_500k.shp"
+excel_file = "SNAP_Bivariate _Classification_Dataset.xlsx"
+shapefile = "cb_2023_37_tract_500k\cb_2023_37_tract_500k.shp"
 
 
 # ==========================================================
