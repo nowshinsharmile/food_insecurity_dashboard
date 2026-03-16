@@ -1,0 +1,10 @@
+streamlit
+pandas
+geopandas
+folium
+streamlit-folium
+altair
+openpyxl
+shapely
+fiona
+pyproj
