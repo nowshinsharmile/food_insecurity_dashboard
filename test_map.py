@@ -183,7 +183,40 @@ for _,row in agency_gdf.iterrows():
         fill_opacity=0.9,
         tooltip=row["Agency Short Name"]
     ).add_to(m)
+# ----------------------------------------------------------
+# SNAP LEGEND
+# ----------------------------------------------------------
 
+if map_mode == "SNAP Bivariate Classification":
+
+    legend_html = """
+    <div style="
+        position: fixed;
+        bottom: 30px; left: 50px;
+        width: 260px;
+        background-color: white;
+        border:2px solid grey;
+        z-index:9999;
+        font-size:14px;
+        padding:10px;
+    ">
+    <b>SNAP Bivariate Classification</b><br>
+
+    <i style="background:#ea524a;width:15px;height:15px;display:inline-block"></i>
+    Above SNAP Median, No Agency<br>
+
+    <i style="background:#6ecffa;width:15px;height:15px;display:inline-block"></i>
+    Below SNAP Median, No Agency<br>
+
+    <i style="background:#7dba53;width:15px;height:15px;display:inline-block"></i>
+    Below SNAP Median, Agency<br>
+
+    <i style="background:#f9dd5f;width:15px;height:15px;display:inline-block"></i>
+    Above SNAP Median, Agency
+    </div>
+    """
+
+    m.get_root().html.add_child(folium.Element(legend_html))
 st_folium(m, height=750, use_container_width=True)
 
 
