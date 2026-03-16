@@ -1,10 +1,9 @@
 streamlit
 pandas
 geopandas
+pyogrio
+shapely
 folium
 streamlit-folium
 altair
 openpyxl
-shapely
-fiona
-pyproj
