@@ -217,6 +217,38 @@ if map_mode == "SNAP Bivariate Classification":
     """
 
     m.get_root().html.add_child(folium.Element(legend_html))
+
+# ----------------------------------------------------------
+# LI/LA LEGEND
+# ----------------------------------------------------------
+
+if map_mode == "LI/LA Classification":
+
+    legend_html = """
+    <div style="
+        position: fixed;
+        bottom: 30px; left: 50px;
+        width: 220px;
+        background-color: white;
+        border:2px solid grey;
+        z-index:9999;
+        font-size:14px;
+        padding:10px;
+    ">
+    <b>LI/LA Classification</b><br>
+
+    <i style="background:#e5513f;width:15px;height:15px;display:inline-block"></i>
+    LI/LA<br>
+
+    <i style="background:#defd93;width:15px;height:15px;display:inline-block"></i>
+    Not LI/LA<br>
+
+    <i style="background:#e0e0e0;width:15px;height:15px;display:inline-block"></i>
+    Not in Data
+    </div>
+    """
+
+    m.get_root().html.add_child(folium.Element(legend_html))
 st_folium(m, height=750, use_container_width=True)
 
 
