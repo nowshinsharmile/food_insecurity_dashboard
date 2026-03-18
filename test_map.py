@@ -10,6 +10,7 @@ import pandas as pd
 import folium
 import altair as alt
 from streamlit_folium import st_folium
+import numpy as np
 
 
 # ==========================================================
@@ -179,16 +180,30 @@ else:
 m = folium.Map(location=[36.05, -79.9], zoom_start=7, tiles="cartodbpositron")
 
 if map_mode == "SNAP Population":
-    # Choropleth layer
+
+    # ----------------------------------------------------------
+    # CREATE QUANTILE BINS (8 colors)
+    # ----------------------------------------------------------
+    values = filtered_gdf[snap_col].fillna(0)
+
+    bins = np.quantile(values, np.linspace(0, 1, 9))
+
+    # remove duplicate bin edges (important)
+    bins = np.unique(bins)
+
+    # ----------------------------------------------------------
+    # CHOROPLETH WITH CUSTOM BINS
+    # ----------------------------------------------------------
     folium.Choropleth(
         geo_data=filtered_gdf,
         data=filtered_gdf,
         columns=["tractid", snap_col],
         key_on="feature.properties.tractid",
         fill_color="YlOrRd",
+        bins=bins,   # 🔥 THIS IS THE KEY CHANGE
         fill_opacity=0.8,
         line_opacity=0.2,
-        legend_name=f"SNAP Participants ({snap_year})",
+        legend_name=f"SNAP Participants ({snap_year}) (Quantile-based)",
         nan_fill_color="lightgray"
     ).add_to(m)
 
@@ -229,8 +244,7 @@ if map_mode == "SNAP Population":
         padding:10px;
     ">
     <b>SNAP Population ({snap_year})</b><br>
-    Darker color = Higher SNAP population
-    </div>
+    Quantile-based coloring (relative distribution)
     """
     m.get_root().html.add_child(folium.Element(legend_html))
 
