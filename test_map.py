@@ -187,38 +187,45 @@ if map_mode == "SNAP Population":
 
     values = filtered_gdf[snap_col].fillna(0)
 
+    # ----------------------------------------------------------
+    # CREATE QUANTILE BINS (8 colors)
+    # ----------------------------------------------------------
     bins = np.quantile(values, np.linspace(0, 1, 9))
     bins = np.unique(bins)
 
     if len(bins) < 3:
         bins = np.linspace(values.min(), values.max(), 5)
 
-    # ------------------ Choropleth ------------------
-    folium.Choropleth(
-    geo_data=filtered_gdf,
-    data=filtered_gdf,
-    columns=["tractid", snap_col],
-    key_on="feature.properties.tractid",
-    fill_color="YlOrRd",
-    bins=bins,
-    fill_opacity=0.8,
-    line_opacity=0.2,
-    legend_name=" ",   # trick
-    nan_fill_color="lightgray"
-    ).add_to(m)
+    # ----------------------------------------------------------
+    # COLOR PALETTE
+    # ----------------------------------------------------------
+    colors = [
+        "#ffffcc", "#ffeda0", "#fed976", "#feb24c",
+        "#fd8d3c", "#fc4e2a", "#e31a1c", "#b10026"
+    ]
 
-    # REMOVE default folium legend (color_map)
-    for key in list(m._children):
-        if key.startswith("color_map"):
-            del m._children[key]
+    # ----------------------------------------------------------
+    # FUNCTION TO MAP VALUE → COLOR
+    # ----------------------------------------------------------
+    def get_color(val):
+        for i in range(len(bins) - 1):
+            if bins[i] <= val <= bins[i + 1]:
+                return colors[min(i, len(colors)-1)]
+        return colors[-1]
 
-    # ------------------ Hover ------------------
+    # assign color column
+    filtered_gdf["snap_color"] = filtered_gdf[snap_col].apply(get_color)
+
+    # ----------------------------------------------------------
+    # DRAW MAP (GeoJson instead of Choropleth)
+    # ----------------------------------------------------------
     folium.GeoJson(
         filtered_gdf,
-        style_function=lambda x: {
-            "fillOpacity": 0,
+        style_function=lambda feature: {
+            "fillColor": feature["properties"]["snap_color"],
             "color": "black",
-            "weight": 0.2
+            "weight": 0.2,
+            "fillOpacity": 0.8
         },
         tooltip=folium.GeoJsonTooltip(
             fields=[
@@ -237,20 +244,17 @@ if map_mode == "SNAP Population":
         )
     ).add_to(m)
 
-    # ------------------ Custom Legend ------------------
+    # ----------------------------------------------------------
+    # CUSTOM LEGEND
+    # ----------------------------------------------------------
     bin_labels = []
     for i in range(len(bins) - 1):
         low = int(bins[i])
         high = int(bins[i + 1])
         bin_labels.append(f"{low:,} – {high:,}")
 
-    colors = [
-        "#ffffcc", "#ffeda0", "#fed976", "#feb24c",
-        "#fd8d3c", "#fc4e2a", "#e31a1c", "#b10026"
-    ][:len(bin_labels)]
-
     legend_items = ""
-    for color, label in zip(colors, bin_labels):
+    for color, label in zip(colors[:len(bin_labels)], bin_labels):
         legend_items += f"""
         <div style="margin-bottom:4px;">
             <i style="background:{color};
@@ -274,7 +278,7 @@ if map_mode == "SNAP Population":
 
     <b>SNAP Population ({snap_year})</b><br>
     <span style="font-size:11px;">
-    Relative distribution (each color ≈ equal number of tracts)
+    Quantile-based distribution
     </span><br><br>
 
     {legend_items}
@@ -283,7 +287,6 @@ if map_mode == "SNAP Population":
     """
 
     m.get_root().html.add_child(folium.Element(legend_html))
-
 
 # ==========================================================
 # SNAP BIVARIATE + LI/LA MAP
