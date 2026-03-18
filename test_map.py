@@ -17,7 +17,7 @@ import numpy as np
 # FILE PATHS
 # ==========================================================
 
-excel_file = "SNAP_Bivariate _Classification_Dataset.xlsx"
+excel_file = "SNAP_Bivariate_Classification_Dataset.xlsx"
 shapefile = "cb_2023_37_tract_500k/cb_2023_37_tract_500k.shp"
 
 
@@ -290,6 +290,27 @@ if map_mode == "SNAP Population":
         )
     ).add_to(m)
 
+    st_folium(m, height=750, use_container_width=True)
+
+    # ----------------------------------------------------------
+    # ADD AGENCY POINTS (MAP 1)
+    # ----------------------------------------------------------
+    for _, row in agency_gdf.iterrows():
+        folium.CircleMarker(
+            location=[row["lat"], row["long"]],
+            radius=1.8,
+            color="black",
+            weight=0.5,
+            fill=True,
+            fill_color="#1f77b4",
+            fill_opacity=0.9,
+            tooltip=f"Agency: {row['Agency Short Name']}"
+        ).add_to(m)
+
+# ----------------------------------------------------------
+# RENDER MAP 1
+# ----------------------------------------------------------
+st_folium(m, height=750, use_container_width=True)
 
 # ==========================================================
 # MAP 2 : VISIT CHANGE MAP
