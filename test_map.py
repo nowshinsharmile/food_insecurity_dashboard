@@ -195,17 +195,22 @@ if map_mode == "SNAP Population":
 
     # ------------------ Choropleth ------------------
     folium.Choropleth(
-        geo_data=filtered_gdf,
-        data=filtered_gdf,
-        columns=["tractid", snap_col],
-        key_on="feature.properties.tractid",
-        fill_color="YlOrRd",
-        bins=bins,
-        fill_opacity=0.8,
-        line_opacity=0.2,
-        legend_name=None,
-        nan_fill_color="lightgray"
+    geo_data=filtered_gdf,
+    data=filtered_gdf,
+    columns=["tractid", snap_col],
+    key_on="feature.properties.tractid",
+    fill_color="YlOrRd",
+    bins=bins,
+    fill_opacity=0.8,
+    line_opacity=0.2,
+    legend_name=" ",   # trick
+    nan_fill_color="lightgray"
     ).add_to(m)
+
+    # REMOVE default folium legend (color_map)
+    for key in list(m._children):
+        if key.startswith("color_map"):
+            del m._children[key]
 
     # ------------------ Hover ------------------
     folium.GeoJson(
