@@ -179,25 +179,21 @@ else:
 
 m = folium.Map(location=[36.05, -79.9], zoom_start=7, tiles="cartodbpositron")
 
+# ==========================================================
+# SNAP POPULATION (HEAT MAP)
+# ==========================================================
+
 if map_mode == "SNAP Population":
 
-    import numpy as np
-
-    # ----------------------------------------------------------
-    # CREATE QUANTILE BINS (8 colors)
-    # ----------------------------------------------------------
     values = filtered_gdf[snap_col].fillna(0)
 
     bins = np.quantile(values, np.linspace(0, 1, 9))
     bins = np.unique(bins)
 
-    # fallback if bins collapse (edge case)
     if len(bins) < 3:
         bins = np.linspace(values.min(), values.max(), 5)
 
-    # ----------------------------------------------------------
-    # CHOROPLETH
-    # ----------------------------------------------------------
+    # ------------------ Choropleth ------------------
     folium.Choropleth(
         geo_data=filtered_gdf,
         data=filtered_gdf,
@@ -207,13 +203,36 @@ if map_mode == "SNAP Population":
         bins=bins,
         fill_opacity=0.8,
         line_opacity=0.2,
-        legend_name=None,  # disable broken default legend
+        legend_name=None,
         nan_fill_color="lightgray"
     ).add_to(m)
 
-    # ----------------------------------------------------------
-    # CUSTOM LEGEND
-    # ----------------------------------------------------------
+    # ------------------ Hover ------------------
+    folium.GeoJson(
+        filtered_gdf,
+        style_function=lambda x: {
+            "fillOpacity": 0,
+            "color": "black",
+            "weight": 0.2
+        },
+        tooltip=folium.GeoJsonTooltip(
+            fields=[
+                "County",
+                "tractid",
+                "SNAP Participant Count 2022",
+                "SNAP Participant Count 2023"
+            ],
+            aliases=[
+                "County:",
+                "Tract:",
+                "SNAP 2022:",
+                "SNAP 2023:"
+            ],
+            sticky=True
+        )
+    ).add_to(m)
+
+    # ------------------ Custom Legend ------------------
     bin_labels = []
     for i in range(len(bins) - 1):
         low = int(bins[i])
@@ -223,10 +242,7 @@ if map_mode == "SNAP Population":
     colors = [
         "#ffffcc", "#ffeda0", "#fed976", "#feb24c",
         "#fd8d3c", "#fc4e2a", "#e31a1c", "#b10026"
-    ]
-
-    # match number of colors to bins
-    colors = colors[:len(bin_labels)]
+    ][:len(bin_labels)]
 
     legend_items = ""
     for color, label in zip(colors, bin_labels):
@@ -263,53 +279,114 @@ if map_mode == "SNAP Population":
 
     m.get_root().html.add_child(folium.Element(legend_html))
 
-    # ----------------------------------------------------------
-    # HOVER LAYER
-    # ----------------------------------------------------------
+
+# ==========================================================
+# SNAP BIVARIATE + LI/LA MAP
+# ==========================================================
+
+else:
+
+    def style_function(feature):
+        return {
+            "fillColor": feature["properties"]["color"],
+            "color": "black",
+            "weight": 0.3,
+            "fillOpacity": 0.7
+        }
+
     folium.GeoJson(
         filtered_gdf,
-        style_function=lambda x: {
-            "fillOpacity": 0,
-            "color": "black",
-            "weight": 0.2
-        },
+        style_function=style_function,
         tooltip=folium.GeoJsonTooltip(
-            fields=[
-                "County",
-                "tractid",
-                "SNAP Participant Count 2022",
-                "SNAP Participant Count 2023"
-            ],
-            aliases=[
-                "County:",
-                "Tract:",
-                "SNAP 2022:",
-                "SNAP 2023:"
-            ],
+            fields=["County", "tractid", "Agency Count", "Average Increaase in Visit"],
+            aliases=["County:", "Tract:", "Agency Count:", "Visit Change:"],
             sticky=True
         )
     ).add_to(m)
 
-    st_folium(m, height=750, use_container_width=True)
+    # ------------------ Legends ------------------
 
-    # ----------------------------------------------------------
-    # ADD AGENCY POINTS (MAP 1)
-    # ----------------------------------------------------------
-    for _, row in agency_gdf.iterrows():
-        folium.CircleMarker(
-            location=[row["lat"], row["long"]],
-            radius=1.8,
-            color="black",
-            weight=0.5,
-            fill=True,
-            fill_color="#1f77b4",
-            fill_opacity=0.9,
-            tooltip=f"Agency: {row['Agency Short Name']}"
-        ).add_to(m)
+    if map_mode == "SNAP Bivariate Classification":
+        legend_html = """
+        <div style="
+        position: fixed;
+        bottom: 30px; left: 40px;
+        width: 260px;
+        background:white;
+        border:2px solid grey;
+        z-index:9999;
+        font-size:14px;
+        padding:10px;
+        ">
 
-# ----------------------------------------------------------
-# RENDER MAP 1
-# ----------------------------------------------------------
+        <b>SNAP Bivariate Classification</b><br>
+
+        <i style="background:#ea524a;width:15px;height:15px;display:inline-block"></i>
+        Above SNAP Median, No Agency<br>
+
+        <i style="background:#6ecffa;width:15px;height:15px;display:inline-block"></i>
+        Below SNAP Median, No Agency<br>
+
+        <i style="background:#7dba53;width:15px;height:15px;display:inline-block"></i>
+        Below SNAP Median, Agency<br>
+
+        <i style="background:#f9dd5f;width:15px;height:15px;display:inline-block"></i>
+        Above SNAP Median, Agency
+
+        </div>
+        """
+        m.get_root().html.add_child(folium.Element(legend_html))
+
+    elif map_mode == "LI/LA Classification":
+        legend_html = """
+        <div style="
+        position: fixed;
+        bottom: 30px; left: 40px;
+        width: 220px;
+        background:white;
+        border:2px solid grey;
+        z-index:9999;
+        font-size:14px;
+        padding:10px;
+        ">
+
+        <b>LI/LA Classification</b><br>
+
+        <i style="background:#e5513f;width:15px;height:15px;display:inline-block"></i>
+        LI/LA<br>
+
+        <i style="background:#defd93;width:15px;height:15px;display:inline-block"></i>
+        Not LI/LA<br>
+
+        <i style="background:#e0e0e0;width:15px;height:15px;display:inline-block"></i>
+        Not in Data
+
+        </div>
+        """
+        m.get_root().html.add_child(folium.Element(legend_html))
+
+
+# ==========================================================
+# ADD AGENCY POINTS (ONCE, BEFORE RENDER)
+# ==========================================================
+
+for _, row in agency_gdf.iterrows():
+    folium.CircleMarker(
+        location=[row["lat"], row["long"]],
+        radius=1.8,
+        color="black",
+        weight=0.5,
+        fill=True,
+        fill_color="#1f77b4",
+        fill_opacity=0.9,
+        tooltip=f"Agency: {row['Agency Short Name']}"
+    ).add_to(m)
+
+
+# ==========================================================
+# RENDER MAP 1 (ONLY ONCE)
+# ==========================================================
+
 st_folium(m, height=750, use_container_width=True)
 
 # ==========================================================
