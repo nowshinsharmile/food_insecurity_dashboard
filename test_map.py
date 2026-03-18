@@ -203,9 +203,57 @@ if map_mode == "SNAP Population":
         bins=bins,   # 🔥 THIS IS THE KEY CHANGE
         fill_opacity=0.8,
         line_opacity=0.2,
-        legend_name=f"SNAP Participants ({snap_year}) (Quantile-based)",
+        legend_name=None,
         nan_fill_color="lightgray"
     ).add_to(m)
+    # ----------------------------------------------------------
+# CREATE CLEAN LEGEND FROM BINS
+# ----------------------------------------------------------
+
+    bin_labels = []
+    for i in range(len(bins) - 1):
+        low = int(bins[i])
+        high = int(bins[i+1])
+        bin_labels.append(f"{low:,} – {high:,}")
+
+    # color palette (8 colors from light → dark)
+    colors = [
+        "#ffffcc", "#ffeda0", "#fed976", "#feb24c",
+        "#fd8d3c", "#fc4e2a", "#e31a1c", "#b10026"
+    ]
+
+    legend_items = ""
+    for color, label in zip(colors, bin_labels):
+        legend_items += f"""
+        <div>
+            <i style="background:{color};
+                    width:15px;height:15px;
+                    display:inline-block;margin-right:5px;"></i>
+            {label}
+        </div>
+        """
+
+    legend_html = f"""
+    <div style="
+    position: fixed;
+    bottom: 30px; left: 40px;
+    width: 260px;
+    background:white;
+    border:2px solid grey;
+    z-index:9999;
+    font-size:13px;
+    padding:10px;
+    ">
+
+    <b>SNAP Population ({snap_year})</b><br>
+    <span style="font-size:11px;">Quantile-based ranges</span><br><br>
+
+    {legend_items}
+
+    </div>
+    """
+
+    m.get_root().html.add_child(folium.Element(legend_html))
 
     # Hover layer
     folium.GeoJson(
@@ -232,20 +280,7 @@ if map_mode == "SNAP Population":
         )
     ).add_to(m)
 
-    legend_html = f"""
-    <div style="
-        position: fixed;
-        bottom: 30px; left: 40px;
-        width: 240px;
-        background:white;
-        border:2px solid grey;
-        z-index:9999;
-        font-size:14px;
-        padding:10px;
-    ">
-    <b>SNAP Population ({snap_year})</b><br>
-    Quantile-based coloring (relative distribution)
-    """
+
     m.get_root().html.add_child(folium.Element(legend_html))
 
 else:
