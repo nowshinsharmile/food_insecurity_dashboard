@@ -26,10 +26,17 @@ shapefile = "cb_2023_37_tract_500k/cb_2023_37_tract_500k.shp"
 
 @st.cache_data
 def load_data():
-
     df = pd.read_excel(excel_file, sheet_name="Sheet3")
     agency_df = pd.read_excel(excel_file, sheet_name="Agency_Data")
     tracts = gpd.read_file(shapefile)
+
+    # Clean column names from Excel
+    df.columns = df.columns.str.strip()
+    agency_df.columns = agency_df.columns.str.strip()
+    tracts.columns = tracts.columns.str.strip()
+
+    # Optional: simplify geometry for faster rendering
+    tracts["geometry"] = tracts["geometry"].simplify(0.0005)
 
     return df, agency_df, tracts
 
@@ -45,14 +52,20 @@ df["tractid"] = df["tractid"].astype(str).str.zfill(11)
 tracts["GEOID"] = tracts["GEOID"].astype(str)
 
 gdf = tracts.merge(df, left_on="GEOID", right_on="tractid", how="inner")
-
 gdf = gdf.to_crs(epsg=4326)
 
+# Fix mixed type issues
 gdf["LI/LA"] = gdf["LI/LA"].astype(str)
+gdf["Average Increaase in Visit"] = gdf["Average Increaase in Visit"].astype(str)
+
+# Need level columns may or may not exist for both years
+for col in ["Need Level 2022", "Need Level 2023"]:
+    if col in gdf.columns:
+        gdf[col] = gdf[col].astype(str)
 
 
 # ==========================================================
-# AGENCY POINT DATA
+# CREATE AGENCY POINT DATA
 # ==========================================================
 
 agency_gdf = gpd.GeoDataFrame(
@@ -80,15 +93,20 @@ change_colors = {
     "No Agency": "#e5acd0"
 }
 
+need_colors = {
+    "Has Agency": "#7790b3",
+    "Neighboring Agency": "#9ac2bf",
+    "High Need": "#d77c7b",
+    "Moderate Need": "#e8a663"
+}
 
-def get_lila_color(val):
 
+def get_lila_color(val: str) -> str:
+    val = str(val).strip()
     if val.lower() in ["not in data", "not in database"]:
         return "#e0e0e0"
-
     if val == "1":
         return "#e5513f"
-
     return "#defd93"
 
 
@@ -100,7 +118,7 @@ st.title("Bivariate Classification Visualization")
 
 
 # ==========================================================
-# MAP TYPE SELECTOR
+# MAP 1 : SNAP / LI-LA / SNAP POPULATION
 # ==========================================================
 
 st.subheader("SNAP / LI-LA Map")
@@ -114,14 +132,15 @@ map_mode = st.selectbox(
     ]
 )
 
+# ----------------------------------------------------------
+# CHOOSE DATA MODE
+# ----------------------------------------------------------
 
-# ==========================================================
-# SNAP MAP LOGIC
-# ==========================================================
+formulation_col = None
+filtered_gdf = gdf.copy()
 
 if map_mode == "SNAP Bivariate Classification":
-
-    acs_year = st.selectbox("Select ACS Data Year", ["2022","2023"])
+    acs_year = st.selectbox("Select ACS Data Year", ["2022", "2023"])
 
     if acs_year == "2022":
         formulation_col = "Formulation 2022"
@@ -138,43 +157,42 @@ if map_mode == "SNAP Bivariate Classification":
     filtered_gdf["color"] = filtered_gdf[formulation_col].map(snap_colors)
 
 elif map_mode == "SNAP Population":
-
     snap_year = st.selectbox("Select SNAP Year", ["2022", "2023"])
-
     snap_col = f"SNAP Participant Count {snap_year}"
-
     filtered_gdf = gdf.copy()
-else:
 
+else:
     selected = st.multiselect(
         "Select LI/LA classification",
-        options=["1","0","Not In Data"],
-        default=["1","0","Not In Data"]
+        options=["1", "0", "Not In Data"],
+        default=["1", "0", "Not In Data"]
     )
 
     filtered_gdf = gdf[gdf["LI/LA"].isin(selected)].copy()
     filtered_gdf["color"] = filtered_gdf["LI/LA"].apply(get_lila_color)
 
 
-# ==========================================================
-# MAP 1
-# ==========================================================
+# ----------------------------------------------------------
+# BUILD MAP 1
+# ----------------------------------------------------------
 
-m = folium.Map(location=[36.05,-79.9], zoom_start=7, tiles="cartodbpositron")
+m = folium.Map(location=[36.05, -79.9], zoom_start=7, tiles="cartodbpositron")
 
 if map_mode == "SNAP Population":
-
+    # Choropleth layer
     folium.Choropleth(
         geo_data=filtered_gdf,
         data=filtered_gdf,
         columns=["tractid", snap_col],
         key_on="feature.properties.tractid",
-        fill_color="YlOrRd",   # 🔥 heat-style gradient
+        fill_color="YlOrRd",
         fill_opacity=0.8,
         line_opacity=0.2,
         legend_name=f"SNAP Participants ({snap_year})",
         nan_fill_color="lightgray"
     ).add_to(m)
+
+    # Hover layer
     folium.GeoJson(
         filtered_gdf,
         style_function=lambda x: {
@@ -199,146 +217,123 @@ if map_mode == "SNAP Population":
         )
     ).add_to(m)
 
-    for _, row in agency_gdf.iterrows():
-
-        folium.CircleMarker(
-            location=[row["lat"], row["long"]],
-            radius=2,
-            color="black",
-            fill=True,
-            fill_color="#1f77b4",
-            fill_opacity=0.9,
-            tooltip=f"Agency: {row['Agency Short Name']}"
-        ).add_to(m)
-        legend_html = f"""
+    legend_html = f"""
     <div style="
-    position: fixed;
-    bottom: 30px; left: 40px;
-    width: 230px;
-    background:white;
-    border:2px solid grey;
-    z-index:9999;
-    font-size:14px;
-    padding:10px;
+        position: fixed;
+        bottom: 30px; left: 40px;
+        width: 240px;
+        background:white;
+        border:2px solid grey;
+        z-index:9999;
+        font-size:14px;
+        padding:10px;
     ">
-
     <b>SNAP Population ({snap_year})</b><br>
     Darker color = Higher SNAP population
-
     </div>
     """
-
     m.get_root().html.add_child(folium.Element(legend_html))
-def style_function(feature):
-    return {
-        "fillColor": feature["properties"]["color"],
-        "color": "black",
-        "weight": 0.3,
-        "fillOpacity": 0.7
-    }
 
-tooltip_fields = ["County","tractid","Agency Count","Average Increase in Visit"]
+else:
+    def style_function(feature):
+        return {
+            "fillColor": feature["properties"]["color"],
+            "color": "black",
+            "weight": 0.3,
+            "fillOpacity": 0.7
+        }
 
-folium.GeoJson(
-    filtered_gdf,
-    style_function=style_function,
-    tooltip=folium.GeoJsonTooltip(
-        fields=tooltip_fields,
-        aliases=["County","Tract","Agency Count","Visit Change"]
-    )
-).add_to(m)
+    folium.GeoJson(
+        filtered_gdf,
+        style_function=style_function,
+        tooltip=folium.GeoJsonTooltip(
+            fields=["County", "tractid", "Agency Count", "Average Increaase in Visit"],
+            aliases=["County:", "Tract:", "Agency Count:", "Visit Change:"],
+            sticky=True
+        )
+    ).add_to(m)
 
-# Agency markers
-for _,row in agency_gdf.iterrows():
+    if map_mode == "SNAP Bivariate Classification":
+        legend_html = """
+        <div style="
+            position: fixed;
+            bottom: 30px; left: 50px;
+            width: 260px;
+            background-color: white;
+            border:2px solid grey;
+            z-index:9999;
+            font-size:14px;
+            padding:10px;
+        ">
+        <b>SNAP Bivariate Classification</b><br>
 
+        <i style="background:#ea524a;width:15px;height:15px;display:inline-block"></i>
+        Above SNAP Median, No Agency<br>
+
+        <i style="background:#6ecffa;width:15px;height:15px;display:inline-block"></i>
+        Below SNAP Median, No Agency<br>
+
+        <i style="background:#7dba53;width:15px;height:15px;display:inline-block"></i>
+        Below SNAP Median, Agency<br>
+
+        <i style="background:#f9dd5f;width:15px;height:15px;display:inline-block"></i>
+        Above SNAP Median, Agency
+        </div>
+        """
+        m.get_root().html.add_child(folium.Element(legend_html))
+
+    elif map_mode == "LI/LA Classification":
+        legend_html = """
+        <div style="
+            position: fixed;
+            bottom: 30px; left: 50px;
+            width: 220px;
+            background-color: white;
+            border:2px solid grey;
+            z-index:9999;
+            font-size:14px;
+            padding:10px;
+        ">
+        <b>LI/LA Classification</b><br>
+
+        <i style="background:#e5513f;width:15px;height:15px;display:inline-block"></i>
+        LI/LA<br>
+
+        <i style="background:#defd93;width:15px;height:15px;display:inline-block"></i>
+        Not LI/LA<br>
+
+        <i style="background:#e0e0e0;width:15px;height:15px;display:inline-block"></i>
+        Not in Data
+        </div>
+        """
+        m.get_root().html.add_child(folium.Element(legend_html))
+
+# Agency markers added once
+for _, row in agency_gdf.iterrows():
     folium.CircleMarker(
-        location=[row["lat"],row["long"]],
-        radius=1.5,
+        location=[row["lat"], row["long"]],
+        radius=1.8,
         color="black",
         weight=0.5,
         fill=True,
         fill_color="#1f77b4",
         fill_opacity=0.9,
-        tooltip=row["Agency Short Name"]
+        tooltip=f"Agency: {row['Agency Short Name']}"
     ).add_to(m)
-# ----------------------------------------------------------
-# SNAP LEGEND
-# ----------------------------------------------------------
 
-if map_mode == "SNAP Bivariate Classification":
-
-    legend_html = """
-    <div style="
-        position: fixed;
-        bottom: 30px; left: 50px;
-        width: 260px;
-        background-color: white;
-        border:2px solid grey;
-        z-index:9999;
-        font-size:14px;
-        padding:10px;
-    ">
-    <b>SNAP Bivariate Classification</b><br>
-
-    <i style="background:#ea524a;width:15px;height:15px;display:inline-block"></i>
-    Above SNAP Median, No Agency<br>
-
-    <i style="background:#6ecffa;width:15px;height:15px;display:inline-block"></i>
-    Below SNAP Median, No Agency<br>
-
-    <i style="background:#7dba53;width:15px;height:15px;display:inline-block"></i>
-    Below SNAP Median, Agency<br>
-
-    <i style="background:#f9dd5f;width:15px;height:15px;display:inline-block"></i>
-    Above SNAP Median, Agency
-    </div>
-    """
-
-    m.get_root().html.add_child(folium.Element(legend_html))
-
-# ----------------------------------------------------------
-# LI/LA LEGEND
-# ----------------------------------------------------------
-
-if map_mode == "LI/LA Classification":
-
-    legend_html = """
-    <div style="
-        position: fixed;
-        bottom: 30px; left: 50px;
-        width: 220px;
-        background-color: white;
-        border:2px solid grey;
-        z-index:9999;
-        font-size:14px;
-        padding:10px;
-    ">
-    <b>LI/LA Classification</b><br>
-
-    <i style="background:#e5513f;width:15px;height:15px;display:inline-block"></i>
-    LI/LA<br>
-
-    <i style="background:#defd93;width:15px;height:15px;display:inline-block"></i>
-    Not LI/LA<br>
-
-    <i style="background:#e0e0e0;width:15px;height:15px;display:inline-block"></i>
-    Not in Data
-    </div>
-    """
-
-    m.get_root().html.add_child(folium.Element(legend_html))
 st_folium(m, height=750, use_container_width=True)
 
 
 # ==========================================================
-# VISIT CHANGE MAP
+# MAP 2 : VISIT CHANGE MAP
 # ==========================================================
 
 st.subheader("Visit Change Map")
 
-gdf["change_color"] = gdf["Average Increaase in Visit"].map(change_colors)
+gdf["change_color"] = gdf["Average Increaase in Visit"].map(change_colors).fillna("#cccccc")
 
-m2 = folium.Map(location=[36.05,-79.9], zoom_start=7, tiles="cartodbpositron")
+m2 = folium.Map(location=[36.05, -79.9], zoom_start=7, tiles="cartodbpositron")
+
 
 def style_change(feature):
     return {
@@ -348,43 +343,35 @@ def style_change(feature):
         "fillOpacity": 0.7
     }
 
+
+visit_tooltip_fields = ["County", "tractid", "Agency Count", "Average Increaase in Visit"]
+visit_tooltip_aliases = ["County:", "Tract:", "Agency Count:", "Visit Change:"]
+
+if "Need Level 2023" in gdf.columns:
+    visit_tooltip_fields.append("Need Level 2023")
+    visit_tooltip_aliases.append("Need Level:")
+
 folium.GeoJson(
     gdf,
     style_function=style_change,
     tooltip=folium.GeoJsonTooltip(
-        fields=[
-            "County",
-            "tractid",
-            "Agency Count",
-            "Average Increaase in Visit",
-            "Need Level 2023"
-        ],
-        aliases=[
-            "County:",
-            "Tract:",
-            "Agency Count:",
-            "Visit Change:",
-            "Need Level:"
-        ],
+        fields=visit_tooltip_fields,
+        aliases=visit_tooltip_aliases,
         sticky=True
     )
 ).add_to(m2)
 
-for _,row in agency_gdf.iterrows():
-
+for _, row in agency_gdf.iterrows():
     folium.CircleMarker(
-        location=[row["lat"],row["long"]],
-        radius=1.5,
+        location=[row["lat"], row["long"]],
+        radius=1.8,
         color="black",
         weight=0.5,
         fill=True,
         fill_color="#1f77b4",
         fill_opacity=0.9,
-        tooltip=row["Agency Short Name"]
+        tooltip=f"Agency: {row['Agency Short Name']}"
     ).add_to(m2)
-# ----------------------------------------------------------
-# VISIT CHANGE LEGEND
-# ----------------------------------------------------------
 
 legend2 = """
 <div style="
@@ -416,147 +403,124 @@ No Agency
 """
 
 m2.get_root().html.add_child(folium.Element(legend2))
-
 st_folium(m2, height=750, use_container_width=True)
 
+
 # ==========================================================
-# NEED LEVEL MAP
+# MAP 3 : NEED LEVEL MAP
 # ==========================================================
 
 st.subheader("Food Access Need Map")
 
-need_colors = {
-    "Has Agency": "#7790b3",
-    "Neighboring Agency": "#9ac2bf",
-    "High Need": "#d77c7b",
-    "Moderate Need": "#e8a663"
-}
+need_level_col = "Need Level 2023" if "Need Level 2023" in gdf.columns else None
 
-gdf["need_color"] = gdf["Need Level 2023"].map(need_colors)
+if need_level_col:
+    gdf["need_color"] = gdf[need_level_col].map(need_colors).fillna("#cccccc")
 
-m3 = folium.Map(
-    location=[36.05, -79.9],
-    zoom_start=7,
-    tiles="cartodbpositron"
-)
-
-# ----------------------------------------------------------
-# STYLE FUNCTION
-# ----------------------------------------------------------
-
-def style_need(feature):
-
-    return {
-        "fillColor": feature["properties"]["need_color"],
-        "color": "black",
-        "weight": 0.3,
-        "fillOpacity": 0.7
-    }
-
-
-# ----------------------------------------------------------
-# HOVER TOOLTIP FOR TRACTS
-# ----------------------------------------------------------
-
-tooltip_fields = [
-    "County",
-    "tractid",
-    "Agency Count",
-    "SNAP Participant Count 2023",
-    "Above SNAP Median 2023",
-    "Need Level 2023"
-]
-
-tooltip_alias = [
-    "County:",
-    "Tract:",
-    "Agency Count:",
-    "SNAP Participants:",
-    "SNAP Median:",
-    "Need Level:"
-]
-
-folium.GeoJson(
-    gdf,
-    style_function=style_need,
-    tooltip=folium.GeoJsonTooltip(
-        fields=tooltip_fields,
-        aliases=tooltip_alias,
-        sticky=True,
-        labels=True
+    m3 = folium.Map(
+        location=[36.05, -79.9],
+        zoom_start=7,
+        tiles="cartodbpositron"
     )
-).add_to(m3)
 
+    def style_need(feature):
+        return {
+            "fillColor": feature["properties"]["need_color"],
+            "color": "black",
+            "weight": 0.3,
+            "fillOpacity": 0.7
+        }
 
-# ----------------------------------------------------------
-# AGENCY POINT OVERLAY
-# ----------------------------------------------------------
+    need_tooltip_fields = [
+        "County",
+        "tractid",
+        "Agency Count",
+        "SNAP Participant Count 2023",
+        "Above SNAP Median 2023",
+        need_level_col
+    ]
 
-for _, row in agency_gdf.iterrows():
+    need_tooltip_aliases = [
+        "County:",
+        "Tract:",
+        "Agency Count:",
+        "SNAP Participants:",
+        "SNAP Median:",
+        "Need Level:"
+    ]
 
-    folium.CircleMarker(
-        location=[row["lat"], row["long"]],
-        radius=2,
-        color="black",
-        weight=0.5,
-        fill=True,
-        fill_color="#1f77b4",
-        fill_opacity=0.9,
-        tooltip=folium.Tooltip(
-            f"""
-            <b>Agency:</b> {row['Agency Short Name']}<br>
-            <b>Lat:</b> {row['lat']}<br>
-            <b>Lon:</b> {row['long']}
-            """,
-            sticky=True
+    folium.GeoJson(
+        gdf,
+        style_function=style_need,
+        tooltip=folium.GeoJsonTooltip(
+            fields=need_tooltip_fields,
+            aliases=need_tooltip_aliases,
+            sticky=True,
+            labels=True
         )
     ).add_to(m3)
 
+    for _, row in agency_gdf.iterrows():
+        folium.CircleMarker(
+            location=[row["lat"], row["long"]],
+            radius=2,
+            color="black",
+            weight=0.5,
+            fill=True,
+            fill_color="#1f77b4",
+            fill_opacity=0.9,
+            tooltip=folium.Tooltip(
+                f"""
+                <b>Agency:</b> {row['Agency Short Name']}<br>
+                <b>Lat:</b> {row['lat']}<br>
+                <b>Lon:</b> {row['long']}
+                """,
+                sticky=True
+            )
+        ).add_to(m3)
 
-# ----------------------------------------------------------
-# LEGEND
-# ----------------------------------------------------------
+    legend3 = """
+    <div style="
+    position: fixed; 
+    bottom: 40px; left: 40px; 
+    width: 230px;
+    background:white;
+    border:2px solid grey;
+    z-index:9999;
+    font-size:14px;
+    padding:10px;
+    ">
 
-legend3 = """
-<div style="
-position: fixed; 
-bottom: 40px; left: 40px; 
-width: 230px;
-background:white;
-border:2px solid grey;
-z-index:9999;
-font-size:14px;
-padding:10px;
-">
+    <b>Food Access Need</b><br>
 
-<b>Food Access Need</b><br>
+    <i style="background:#7790b3;width:15px;height:15px;display:inline-block"></i>
+    Has Agency<br>
 
-<i style="background:#7790b3;width:15px;height:15px;display:inline-block"></i>
-Has Agency<br>
+    <i style="background:#9ac2bf;width:15px;height:15px;display:inline-block"></i>
+    Neighboring Agency<br>
 
-<i style="background:#9ac2bf;width:15px;height:15px;display:inline-block"></i>
-Neighboring Agency<br>
+    <i style="background:#d77c7b;width:15px;height:15px;display:inline-block"></i>
+    High Need<br>
 
-<i style="background:#d77c7b;width:15px;height:15px;display:inline-block"></i>
-High Need<br>
+    <i style="background:#e8a663;width:15px;height:15px;display:inline-block"></i>
+    Moderate Need
 
-<i style="background:#e8a663;width:15px;height:15px;display:inline-block"></i>
-Moderate Need
+    </div>
+    """
 
-</div>
-"""
+    m3.get_root().html.add_child(folium.Element(legend3))
+    st_folium(m3, height=750, use_container_width=True)
+else:
+    st.info("Need level columns were not found in the uploaded data.")
 
-m3.get_root().html.add_child(folium.Element(legend3))
 
-st_folium(m3, height=750, use_container_width=True)
 # ==========================================================
 # SNAP VS LI/LA ANALYSIS
 # ==========================================================
 
 st.subheader("SNAP vs LI/LA Analysis")
 
-if map_mode == "SNAP Bivariate Classification":
-
+if map_mode == "SNAP Bivariate Classification" and formulation_col is not None:
     pivot_table = pd.crosstab(
         gdf["LI/LA"],
         gdf[formulation_col]
@@ -567,11 +531,10 @@ if map_mode == "SNAP Bivariate Classification":
     total_row = pivot_table.sum(axis=0)
     total_row.name = "Total"
 
-    pivot_table = pd.concat([pivot_table,total_row.to_frame().T])
+    pivot_table = pd.concat([pivot_table, total_row.to_frame().T])
 
     st.dataframe(pivot_table)
 
-    # Prepare chart data
     plot_df = pivot_table.drop("Total").drop(columns="Total")
 
     chart_df = plot_df.T.reset_index()
@@ -586,27 +549,24 @@ if map_mode == "SNAP Bivariate Classification":
     st.subheader("Distribution of SNAP Categories by LI/LA Status")
 
     chart = alt.Chart(chart_df).mark_bar().encode(
-    x=alt.X(
-        "SNAP Category:N",
-        sort=None,
-        title="SNAP Classification",
-        axis=alt.Axis(labelAngle=-25)
-    ),
-    y=alt.Y("Count:Q", title="Number of Census Tracts"),
-    color=alt.Color(
-        "LI/LA:N",
-        legend=alt.Legend(
-            title="LI/LA Status",
-            orient="bottom"
-        )
-    ),
-        tooltip=["SNAP Category","LI/LA","Count"]
+        x=alt.X(
+            "SNAP Category:N",
+            sort=None,
+            title="SNAP Classification",
+            axis=alt.Axis(labelAngle=-25)
+        ),
+        y=alt.Y("Count:Q", title="Number of Census Tracts"),
+        color=alt.Color(
+            "LI/LA:N",
+            legend=alt.Legend(title="LI/LA Status", orient="bottom")
+        ),
+        tooltip=["SNAP Category", "LI/LA", "Count"]
     ).properties(
         width=700,
         height=350
     )
 
-    col1,col2,col3 = st.columns([1,2,1])
+    col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
         st.altair_chart(chart)
 
@@ -615,80 +575,59 @@ if map_mode == "SNAP Bivariate Classification":
 # INCREASE IN VISIT ANALYSIS
 # ==========================================================
 
-st.subheader("Increase in Visit Analysis")
+if formulation_col is not None:
+    st.subheader("Increase in Visit Analysis")
 
-increase_df = gdf[gdf["Average Increaase in Visit"] == "Increase"]
+    increase_df = gdf[gdf["Average Increaase in Visit"] == "Increase"]
 
-st.write("Number of tracts with increased visits:", len(increase_df))
+    st.write("Number of tracts with increased visits:", len(increase_df))
 
-# ----------------------------------------------------------
-# CREATE PIVOT
-# ----------------------------------------------------------
+    pivot_inc = pd.crosstab(
+        increase_df["LI/LA"],
+        increase_df[formulation_col]
+    )
 
-pivot_inc = pd.crosstab(
-    increase_df["LI/LA"],
-    increase_df[formulation_col]
-)
+    pivot_inc["Total"] = pivot_inc.sum(axis=1)
 
-# add totals
-pivot_inc["Total"] = pivot_inc.sum(axis=1)
+    total_row = pivot_inc.sum(axis=0)
+    total_row.name = "Total"
 
-total_row = pivot_inc.sum(axis=0)
-total_row.name = "Total"
+    pivot_inc = pd.concat([pivot_inc, total_row.to_frame().T])
 
-pivot_inc = pd.concat([pivot_inc, total_row.to_frame().T])
+    pivot_display = pivot_inc.T
 
-# ----------------------------------------------------------
-# TRANSPOSE FOR DISPLAY
-# ----------------------------------------------------------
+    st.write("Pivot Table (Increase in Visits Only)")
+    st.dataframe(pivot_display)
 
-pivot_display = pivot_inc.T
+    plot_df = pivot_display.drop("Total").drop(columns="Total")
 
-st.write("Pivot Table (Increase in Visits Only)")
-st.dataframe(pivot_display)
+    chart_df = plot_df.reset_index()
+    chart_df = chart_df.rename(columns={chart_df.columns[0]: "SNAP Category"})
 
-# ----------------------------------------------------------
-# PREP DATA FOR ALTAIR
-# ----------------------------------------------------------
+    chart_df = chart_df.melt(
+        id_vars="SNAP Category",
+        var_name="LI/LA",
+        value_name="Count"
+    )
 
-plot_df = pivot_display.drop("Total").drop(columns="Total")
+    chart2 = alt.Chart(chart_df).mark_bar().encode(
+        x=alt.X(
+            "SNAP Category:N",
+            sort=None,
+            title="SNAP Classification",
+            axis=alt.Axis(labelAngle=-25)
+        ),
+        y=alt.Y("Count:Q", title="Number of Census Tracts"),
+        color=alt.Color(
+            "LI/LA:N",
+            legend=alt.Legend(title="LI/LA Status", orient="bottom")
+        ),
+        tooltip=["SNAP Category", "LI/LA", "Count"]
+    ).properties(
+        width=700,
+        height=350
+    )
 
-chart_df = plot_df.reset_index()
-
-# rename first column safely
-chart_df = chart_df.rename(columns={chart_df.columns[0]: "SNAP Category"})
-
-chart_df = chart_df.melt(
-    id_vars="SNAP Category",
-    var_name="LI/LA",
-    value_name="Count"
-)
-
-# ----------------------------------------------------------
-# ALTAIR CHART
-# ----------------------------------------------------------
-
-chart2 = alt.Chart(chart_df).mark_bar().encode(
-    x=alt.X(
-        "SNAP Category:N",
-        sort=None,
-        title="SNAP Classification",
-        axis=alt.Axis(labelAngle=-25)
-    ),
-    y=alt.Y("Count:Q", title="Number of Census Tracts"),
-    color=alt.Color(
-        "LI/LA:N",
-        legend=alt.Legend(
-            title="LI/LA Status",
-            orient="bottom"
-        )
-    ),
-    tooltip=["SNAP Category","LI/LA","Count"]
-).properties(
-    width=700,
-    height=350
-)
-
-col1, col2, col3 = st.columns([1,2,1])
-with col2:
-    st.altair_chart(chart2)
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        st.altair_chart(chart2)
