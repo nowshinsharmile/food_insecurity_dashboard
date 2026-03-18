@@ -107,7 +107,11 @@ st.subheader("SNAP / LI-LA Map")
 
 map_mode = st.selectbox(
     "Select map visualization",
-    ["SNAP Bivariate Classification", "LI/LA Classification"]
+    [
+        "SNAP Bivariate Classification",
+        "LI/LA Classification",
+        "SNAP Population"
+    ]
 )
 
 
@@ -133,6 +137,13 @@ if map_mode == "SNAP Bivariate Classification":
     filtered_gdf = gdf[gdf[formulation_col].isin(selected)].copy()
     filtered_gdf["color"] = filtered_gdf[formulation_col].map(snap_colors)
 
+elif map_mode == "SNAP Population":
+
+    snap_year = st.selectbox("Select SNAP Year", ["2022", "2023"])
+
+    snap_col = f"SNAP Participant Count {snap_year}"
+
+    filtered_gdf = gdf.copy()
 else:
 
     selected = st.multiselect(
@@ -151,6 +162,73 @@ else:
 
 m = folium.Map(location=[36.05,-79.9], zoom_start=7, tiles="cartodbpositron")
 
+if map_mode == "SNAP Population":
+
+    folium.Choropleth(
+        geo_data=filtered_gdf,
+        data=filtered_gdf,
+        columns=["tractid", snap_col],
+        key_on="feature.properties.tractid",
+        fill_color="YlOrRd",   # 🔥 heat-style gradient
+        fill_opacity=0.8,
+        line_opacity=0.2,
+        legend_name=f"SNAP Participants ({snap_year})",
+        nan_fill_color="lightgray"
+    ).add_to(m)
+    folium.GeoJson(
+        filtered_gdf,
+        style_function=lambda x: {
+            "fillOpacity": 0,
+            "color": "black",
+            "weight": 0.2
+        },
+        tooltip=folium.GeoJsonTooltip(
+            fields=[
+                "County",
+                "tractid",
+                "SNAP Participant Count 2022",
+                "SNAP Participant Count 2023"
+            ],
+            aliases=[
+                "County:",
+                "Tract:",
+                "SNAP 2022:",
+                "SNAP 2023:"
+            ],
+            sticky=True
+        )
+    ).add_to(m)
+
+    for _, row in agency_gdf.iterrows():
+
+        folium.CircleMarker(
+            location=[row["lat"], row["long"]],
+            radius=2,
+            color="black",
+            fill=True,
+            fill_color="#1f77b4",
+            fill_opacity=0.9,
+            tooltip=f"Agency: {row['Agency Short Name']}"
+        ).add_to(m)
+        legend_html = f"""
+    <div style="
+    position: fixed;
+    bottom: 30px; left: 40px;
+    width: 230px;
+    background:white;
+    border:2px solid grey;
+    z-index:9999;
+    font-size:14px;
+    padding:10px;
+    ">
+
+    <b>SNAP Population ({snap_year})</b><br>
+    Darker color = Higher SNAP population
+
+    </div>
+    """
+
+    m.get_root().html.add_child(folium.Element(legend_html))
 def style_function(feature):
     return {
         "fillColor": feature["properties"]["color"],
@@ -159,7 +237,7 @@ def style_function(feature):
         "fillOpacity": 0.7
     }
 
-tooltip_fields = ["County","tractid","Agency Count","Average Increaase in Visit"]
+tooltip_fields = ["County","tractid","Agency Count","Average Increase in Visit"]
 
 folium.GeoJson(
     filtered_gdf,
