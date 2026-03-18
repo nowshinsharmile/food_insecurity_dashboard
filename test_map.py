@@ -181,18 +181,22 @@ m = folium.Map(location=[36.05, -79.9], zoom_start=7, tiles="cartodbpositron")
 
 if map_mode == "SNAP Population":
 
+    import numpy as np
+
     # ----------------------------------------------------------
     # CREATE QUANTILE BINS (8 colors)
     # ----------------------------------------------------------
     values = filtered_gdf[snap_col].fillna(0)
 
     bins = np.quantile(values, np.linspace(0, 1, 9))
-
-    # remove duplicate bin edges (important)
     bins = np.unique(bins)
 
+    # fallback if bins collapse (edge case)
+    if len(bins) < 3:
+        bins = np.linspace(values.min(), values.max(), 5)
+
     # ----------------------------------------------------------
-    # CHOROPLETH WITH CUSTOM BINS
+    # CHOROPLETH
     # ----------------------------------------------------------
     folium.Choropleth(
         geo_data=filtered_gdf,
@@ -200,35 +204,37 @@ if map_mode == "SNAP Population":
         columns=["tractid", snap_col],
         key_on="feature.properties.tractid",
         fill_color="YlOrRd",
-        bins=bins,   # 🔥 THIS IS THE KEY CHANGE
+        bins=bins,
         fill_opacity=0.8,
         line_opacity=0.2,
-        legend_name=None,
+        legend_name=None,  # disable broken default legend
         nan_fill_color="lightgray"
     ).add_to(m)
-    # ----------------------------------------------------------
-# CREATE CLEAN LEGEND FROM BINS
-# ----------------------------------------------------------
 
+    # ----------------------------------------------------------
+    # CUSTOM LEGEND
+    # ----------------------------------------------------------
     bin_labels = []
     for i in range(len(bins) - 1):
         low = int(bins[i])
-        high = int(bins[i+1])
+        high = int(bins[i + 1])
         bin_labels.append(f"{low:,} – {high:,}")
 
-    # color palette (8 colors from light → dark)
     colors = [
         "#ffffcc", "#ffeda0", "#fed976", "#feb24c",
         "#fd8d3c", "#fc4e2a", "#e31a1c", "#b10026"
     ]
 
+    # match number of colors to bins
+    colors = colors[:len(bin_labels)]
+
     legend_items = ""
     for color, label in zip(colors, bin_labels):
         legend_items += f"""
-        <div>
+        <div style="margin-bottom:4px;">
             <i style="background:{color};
-                    width:15px;height:15px;
-                    display:inline-block;margin-right:5px;"></i>
+                      width:15px;height:15px;
+                      display:inline-block;margin-right:6px;"></i>
             {label}
         </div>
         """
@@ -246,7 +252,9 @@ if map_mode == "SNAP Population":
     ">
 
     <b>SNAP Population ({snap_year})</b><br>
-    <span style="font-size:11px;">Quantile-based ranges</span><br><br>
+    <span style="font-size:11px;">
+    Relative distribution (each color ≈ equal number of tracts)
+    </span><br><br>
 
     {legend_items}
 
@@ -255,7 +263,9 @@ if map_mode == "SNAP Population":
 
     m.get_root().html.add_child(folium.Element(legend_html))
 
-    # Hover layer
+    # ----------------------------------------------------------
+    # HOVER LAYER
+    # ----------------------------------------------------------
     folium.GeoJson(
         filtered_gdf,
         style_function=lambda x: {
@@ -279,98 +289,6 @@ if map_mode == "SNAP Population":
             sticky=True
         )
     ).add_to(m)
-
-
-    m.get_root().html.add_child(folium.Element(legend_html))
-
-else:
-    def style_function(feature):
-        return {
-            "fillColor": feature["properties"]["color"],
-            "color": "black",
-            "weight": 0.3,
-            "fillOpacity": 0.7
-        }
-
-    folium.GeoJson(
-        filtered_gdf,
-        style_function=style_function,
-        tooltip=folium.GeoJsonTooltip(
-            fields=["County", "tractid", "Agency Count", "Average Increaase in Visit"],
-            aliases=["County:", "Tract:", "Agency Count:", "Visit Change:"],
-            sticky=True
-        )
-    ).add_to(m)
-
-    if map_mode == "SNAP Bivariate Classification":
-        legend_html = """
-        <div style="
-            position: fixed;
-            bottom: 30px; left: 50px;
-            width: 260px;
-            background-color: white;
-            border:2px solid grey;
-            z-index:9999;
-            font-size:14px;
-            padding:10px;
-        ">
-        <b>SNAP Bivariate Classification</b><br>
-
-        <i style="background:#ea524a;width:15px;height:15px;display:inline-block"></i>
-        Above SNAP Median, No Agency<br>
-
-        <i style="background:#6ecffa;width:15px;height:15px;display:inline-block"></i>
-        Below SNAP Median, No Agency<br>
-
-        <i style="background:#7dba53;width:15px;height:15px;display:inline-block"></i>
-        Below SNAP Median, Agency<br>
-
-        <i style="background:#f9dd5f;width:15px;height:15px;display:inline-block"></i>
-        Above SNAP Median, Agency
-        </div>
-        """
-        m.get_root().html.add_child(folium.Element(legend_html))
-
-    elif map_mode == "LI/LA Classification":
-        legend_html = """
-        <div style="
-            position: fixed;
-            bottom: 30px; left: 50px;
-            width: 220px;
-            background-color: white;
-            border:2px solid grey;
-            z-index:9999;
-            font-size:14px;
-            padding:10px;
-        ">
-        <b>LI/LA Classification</b><br>
-
-        <i style="background:#e5513f;width:15px;height:15px;display:inline-block"></i>
-        LI/LA<br>
-
-        <i style="background:#defd93;width:15px;height:15px;display:inline-block"></i>
-        Not LI/LA<br>
-
-        <i style="background:#e0e0e0;width:15px;height:15px;display:inline-block"></i>
-        Not in Data
-        </div>
-        """
-        m.get_root().html.add_child(folium.Element(legend_html))
-
-# Agency markers added once
-for _, row in agency_gdf.iterrows():
-    folium.CircleMarker(
-        location=[row["lat"], row["long"]],
-        radius=1.8,
-        color="black",
-        weight=0.5,
-        fill=True,
-        fill_color="#1f77b4",
-        fill_opacity=0.9,
-        tooltip=f"Agency: {row['Agency Short Name']}"
-    ).add_to(m)
-
-st_folium(m, height=750, use_container_width=True)
 
 
 # ==========================================================
