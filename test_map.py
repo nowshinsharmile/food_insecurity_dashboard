@@ -59,7 +59,7 @@ gdf = gdf.to_crs(epsg=4326)
 
 # Fix mixed type issues
 gdf["LI/LA"] = gdf["LI/LA"].astype(str)
-gdf["Average Increaase in Visit"] = gdf["Average Increaase in Visit"].astype(str)
+gdf["Average Increase in Visit"] = gdf["Average Increase in Visit"].astype(str)
 
 # Need level columns may or may not exist for both years
 for col in ["Need Level 2022", "Need Level 2023"]:
@@ -359,7 +359,7 @@ else:
         filtered_gdf,
         style_function=style_function,
         tooltip=folium.GeoJsonTooltip(
-            fields=["County", "tractid", "Agency Count", "Average Increaase in Visit"],
+            fields=["County", "tractid", "Agency Count", "Average Increase in Visit"],
             aliases=["County:", "Tract:", "Agency Count:", "Visit Change:"],
             sticky=True
         )
@@ -456,7 +456,7 @@ st_folium(m, height=750, use_container_width=True)
 
 st.subheader("Visit Change Map")
 
-gdf["change_color"] = gdf["Average Increaase in Visit"].map(change_colors).fillna("#cccccc")
+gdf["change_color"] = gdf["Average Increase in Visit"].map(change_colors).fillna("#cccccc")
 
 m2 = folium.Map(location=[36.05, -79.9], zoom_start=7, tiles="cartodbpositron")
 
@@ -470,7 +470,7 @@ def style_change(feature):
     }
 
 
-visit_tooltip_fields = ["County", "tractid", "Agency Count", "Average Increaase in Visit"]
+visit_tooltip_fields = ["County", "tractid", "Agency Count", "Average Increase in Visit"]
 visit_tooltip_aliases = ["County:", "Tract:", "Agency Count:", "Visit Change:"]
 
 if "Need Level 2023" in gdf.columns:
@@ -704,7 +704,7 @@ if map_mode == "SNAP Bivariate Classification" and formulation_col is not None:
 if formulation_col is not None:
     st.subheader("Increase in Visit Analysis")
 
-    increase_df = gdf[gdf["Average Increaase in Visit"] == "Increase"]
+    increase_df = gdf[gdf["Average Increase in Visit"] == "Increase"]
 
     st.write("Number of tracts with increased visits:", len(increase_df))
 
