@@ -11,7 +11,9 @@ import folium
 import altair as alt
 from streamlit_folium import st_folium
 import numpy as np
-
+import requests
+import base64
+from datetime import datetime
 
 # ==========================================================
 # FILE PATHS
@@ -110,7 +112,58 @@ def get_lila_color(val: str) -> str:
         return "#e5513f"
     return "#defd93"
 
+def save_feedback_to_github(name: str, comment: str) -> None:
+    token = st.secrets["GITHUB_TOKEN"]
+    repo = st.secrets["GITHUB_REPO"]
+    file_path = "feedback.txt"
 
+    url = f"https://api.github.com/repos/{repo}/contents/{file_path}"
+
+    headers = {
+        "Authorization": f"token {token}",
+        "Accept": "application/vnd.github+json"
+    }
+
+    # Read current file if it exists
+    response = requests.get(url, headers=headers, timeout=30)
+
+    if response.status_code == 200:
+        payload = response.json()
+        existing_content = base64.b64decode(payload["content"]).decode("utf-8")
+        sha = payload["sha"]
+    elif response.status_code == 404:
+        existing_content = ""
+        sha = None
+    else:
+        raise RuntimeError(f"GitHub read failed: {response.status_code} - {response.text}")
+
+    timestamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
+    safe_name = name.strip() if name and name.strip() else "Anonymous"
+    safe_comment = comment.strip()
+
+    new_entry = (
+        f"Time: {timestamp}\n"
+        f"Name: {safe_name}\n"
+        f"Comment: {safe_comment}\n"
+        f"{'-'*50}\n"
+    )
+
+    updated_content = existing_content + new_entry
+    encoded_content = base64.b64encode(updated_content.encode("utf-8")).decode("utf-8")
+
+    data = {
+        "message": "Append dashboard feedback",
+        "content": encoded_content,
+        "branch": "main"
+    }
+
+    if sha is not None:
+        data["sha"] = sha
+
+    write_response = requests.put(url, headers=headers, json=data, timeout=30)
+
+    if write_response.status_code not in (200, 201):
+        raise RuntimeError(f"GitHub write failed: {write_response.status_code} - {write_response.text}")
 # ==========================================================
 # PAGE TITLE
 # ==========================================================
@@ -704,3 +757,21 @@ if formulation_col is not None:
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
         st.altair_chart(chart2)
+
+st.divider()
+st.subheader("Leave Feedback")
+
+with st.form("feedback_form"):
+    user_name = st.text_input("Name (optional)")
+    user_comment = st.text_area("Your feedback")
+    submitted = st.form_submit_button("Submit Feedback")
+
+    if submitted:
+        if not user_comment.strip():
+            st.warning("Please enter a comment before submitting.")
+        else:
+            try:
+                save_feedback_to_github(user_name, user_comment)
+                st.success("Thanks — your feedback was submitted.")
+            except Exception as e:
+                st.error(f"Feedback could not be saved. {e}")
