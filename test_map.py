@@ -60,6 +60,13 @@ gdf = gdf.to_crs(epsg=4326)
 
 # Fix mixed type issues
 gdf["LI/LA"] = gdf["LI/LA"].astype(str)
+# ==========================================================
+# FIX LI/LA LABELS (ONLY CHANGE)
+# ==========================================================
+gdf["LI/LA"] = gdf["LI/LA"].replace({
+    "1": "LI/LA",
+    "0": "Not LI/LA"
+})
 gdf["Average Increase in Visit"] = gdf["Average Increase in Visit"].astype(str)
 
 # Need level columns may or may not exist for both years
@@ -109,7 +116,7 @@ def get_lila_color(val: str) -> str:
     val = str(val).strip()
     if val.lower() in ["not in data", "not in database"]:
         return "#e0e0e0"
-    if val == "1":
+    if val == "LI/LA":
         return "#e5513f"
     return "#defd93"
 
@@ -219,8 +226,8 @@ elif map_mode == "SNAP Population":
 else:
     selected = st.multiselect(
         "Select LI/LA classification",
-        options=["1", "0", "Not In Data"],
-        default=["1", "0", "Not In Data"]
+        options=["LI/LA", "Not LI/LA", "Not In Data"],
+        default=["LI/LA", "Not LI/LA", "Not In Data"]  
     )
 
     filtered_gdf = gdf[gdf["LI/LA"].isin(selected)].copy()
@@ -673,29 +680,7 @@ if map_mode == "SNAP Bivariate Classification" and formulation_col is not None:
         value_name="Count"
     )
 
-    st.subheader("Distribution of SNAP Categories by LI/LA Status")
 
-    chart = alt.Chart(chart_df).mark_bar().encode(
-        x=alt.X(
-            "SNAP Category:N",
-            sort=None,
-            title="SNAP Classification",
-            axis=alt.Axis(labelAngle=-25)
-        ),
-        y=alt.Y("Count:Q", title="Number of Census Tracts"),
-        color=alt.Color(
-            "LI/LA:N",
-            legend=alt.Legend(title="LI/LA Status", orient="bottom")
-        ),
-        tooltip=["SNAP Category", "LI/LA", "Count"]
-    ).properties(
-        width=700,
-        height=350
-    )
-
-    col1, col2, col3 = st.columns([1, 2, 1])
-    with col2:
-        st.altair_chart(chart)
 
 
 # ==========================================================
@@ -736,28 +721,6 @@ if formulation_col is not None:
         var_name="LI/LA",
         value_name="Count"
     )
-
-    chart2 = alt.Chart(chart_df).mark_bar().encode(
-        x=alt.X(
-            "SNAP Category:N",
-            sort=None,
-            title="SNAP Classification",
-            axis=alt.Axis(labelAngle=-25)
-        ),
-        y=alt.Y("Count:Q", title="Number of Census Tracts"),
-        color=alt.Color(
-            "LI/LA:N",
-            legend=alt.Legend(title="LI/LA Status", orient="bottom")
-        ),
-        tooltip=["SNAP Category", "LI/LA", "Count"]
-    ).properties(
-        width=700,
-        height=350
-    )
-
-    col1, col2, col3 = st.columns([1, 2, 1])
-    with col2:
-        st.altair_chart(chart2)
 
 st.divider()
 st.subheader("Leave Feedback")
