@@ -648,13 +648,16 @@ else:
     st.info("Need level columns were not found in the uploaded data.")
 
 
-# ==========================================================
-# SNAP VS LI/LA ANALYSIS
-# ==========================================================
-
 st.subheader("SNAP vs LI/LA Analysis")
 
-if map_mode == "SNAP Bivariate Classification" and formulation_col is not None:
+# ----------------------------------------------------------
+# ALWAYS SET DEFAULT
+# ----------------------------------------------------------
+if formulation_col is None:
+    formulation_col = "Formulation 2023"
+
+if formulation_col in gdf.columns:
+
     pivot_table = pd.crosstab(
         gdf["LI/LA"],
         gdf[formulation_col]
@@ -668,18 +671,6 @@ if map_mode == "SNAP Bivariate Classification" and formulation_col is not None:
     pivot_table = pd.concat([pivot_table, total_row.to_frame().T])
 
     st.dataframe(pivot_table)
-
-    plot_df = pivot_table.drop("Total").drop(columns="Total")
-
-    chart_df = plot_df.T.reset_index()
-    chart_df.columns = ["SNAP Category"] + list(chart_df.columns[1:])
-
-    chart_df = chart_df.melt(
-        id_vars="SNAP Category",
-        var_name="LI/LA",
-        value_name="Count"
-    )
-
 
 
 
