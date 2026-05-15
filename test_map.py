@@ -91,17 +91,21 @@ agency_gdf = gpd.GeoDataFrame(
 # ==========================================================
 
 snap_colors = {
-    "Above SNAP Median,No Agency Presence": "#ea524a",
-    "Below SNAP Median,No Agency Presence": "#6ecffa",
-    "Below SNAP Median,Agency Presence": "#7dba53",
-    "Above SNAP Median,Agency Presence": "#f9dd5f"
+    # Two-color family with four shades
+    # Above SNAP median = red shades
+    "Above SNAP Median,No Agency Presence": "#8b0000",   # deep red
+    "Above SNAP Median,Agency Presence": "#f4a6a6",      # light red
+
+    # Below SNAP median = green shades
+    "Below SNAP Median,No Agency Presence": "#d9f2d9",   # very light green
+    "Below SNAP Median,Agency Presence": "#00a651"       # pure green
 }
 
 change_colors = {
     "Increase": "#93c883",
     "Decrease": "#e28980",
     "No Change": "#d5d487",
-    "No Agency": "#e5acd0"
+    "No Agency": "#bdbdbd"   # grey instead of pink
 }
 
 need_colors = {
@@ -112,13 +116,33 @@ need_colors = {
 }
 
 
+# ==========================================================
+# MAP BOUNDS HELPER
+# ==========================================================
+
+def fit_map_to_gdf(m, map_gdf):
+    """
+    Fit Folium map to the displayed service area so the map does not load too zoomed out/small.
+    """
+    if map_gdf is None or map_gdf.empty:
+        return m
+
+    minx, miny, maxx, maxy = map_gdf.total_bounds
+
+    # Folium expects [[south, west], [north, east]]
+    m.fit_bounds([
+        [miny, minx],
+        [maxy, maxx]
+    ])
+
+    return m
 def get_lila_color(val: str) -> str:
     val = str(val).strip()
     if val.lower() in ["not in data", "not in database"]:
         return "#e0e0e0"
     if val == "LI/LA":
-        return "#e5513f"
-    return "#defd93"
+        return "#8b0000"   # LI/LA = deep red
+    return "#00a651"       # Not LI/LA = pure green
 
 def save_feedback_to_github(name: str, comment: str) -> None:
     token = st.secrets["GITHUB_TOKEN"]
@@ -238,7 +262,8 @@ else:
 # BUILD MAP 1
 # ----------------------------------------------------------
 
-m = folium.Map(location=[36.05, -79.9], zoom_start=7, tiles="cartodbpositron")
+m = folium.Map(tiles="cartodbpositron")
+m = fit_map_to_gdf(m, filtered_gdf)
 
 # ==========================================================
 # SNAP POPULATION (HEAT MAP)
@@ -374,7 +399,6 @@ else:
     ).add_to(m)
 
     # ------------------ Legends ------------------
-
     if map_mode == "SNAP Bivariate Classification":
         legend_html = """
         <div style="
@@ -390,16 +414,16 @@ else:
 
         <b>SNAP Bivariate Classification</b><br>
 
-        <i style="background:#ea524a;width:15px;height:15px;display:inline-block"></i>
+        <i style="background:#8b0000;width:15px;height:15px;display:inline-block"></i>
         Above SNAP Median, No Agency<br>
 
-        <i style="background:#6ecffa;width:15px;height:15px;display:inline-block"></i>
+        <i style="background:#d9f2d9;width:15px;height:15px;display:inline-block"></i>
         Below SNAP Median, No Agency<br>
 
-        <i style="background:#7dba53;width:15px;height:15px;display:inline-block"></i>
+        <i style="background:#00a651;width:15px;height:15px;display:inline-block"></i>
         Below SNAP Median, Agency<br>
 
-        <i style="background:#f9dd5f;width:15px;height:15px;display:inline-block"></i>
+        <i style="background:#f4a6a6;width:15px;height:15px;display:inline-block"></i>
         Above SNAP Median, Agency
 
         </div>
@@ -465,17 +489,15 @@ st_folium(m, height=750, use_container_width=True)
 st.subheader("Visit Change Map")
 
 gdf["change_color"] = gdf["Average Increase in Visit"].map(change_colors).fillna("#cccccc")
-
-m2 = folium.Map(location=[36.05, -79.9], zoom_start=7, tiles="cartodbpositron")
-
+m2 = folium.Map(tiles="cartodbpositron")
+m2 = fit_map_to_gdf(m2, gdf)
 
 def style_change(feature):
     return {
         "fillColor": feature["properties"]["change_color"],
         "color": "black",
         "weight": 0.3,
-        "fillOpacity": 0.7
-    }
+        "fillOpacity": 0.7}
 
 
 visit_tooltip_fields = ["County", "tractid", "Agency Count", "Average Increase in Visit"]
@@ -491,9 +513,7 @@ folium.GeoJson(
     tooltip=folium.GeoJsonTooltip(
         fields=visit_tooltip_fields,
         aliases=visit_tooltip_aliases,
-        sticky=True
-    )
-).add_to(m2)
+        sticky=True)).add_to(m2)
 
 for _, row in agency_gdf.iterrows():
     folium.CircleMarker(
@@ -530,7 +550,8 @@ Decrease<br>
 <i style="background:#d5d487;width:15px;height:15px;display:inline-block"></i>
 No Change<br>
 
-<i style="background:#e5acd0;width:15px;height:15px;display:inline-block"></i>
+
+<i style="background:#bdbdbd;width:15px;height:15px;display:inline-block"></i>
 No Agency
 
 </div>
@@ -551,11 +572,8 @@ need_level_col = "Need Level 2023" if "Need Level 2023" in gdf.columns else None
 if need_level_col:
     gdf["need_color"] = gdf[need_level_col].map(need_colors).fillna("#cccccc")
 
-    m3 = folium.Map(
-        location=[36.05, -79.9],
-        zoom_start=7,
-        tiles="cartodbpositron"
-    )
+    m3 = folium.Map(tiles="cartodbpositron")
+    m3 = fit_map_to_gdf(m3, gdf)
 
     def style_need(feature):
         return {
