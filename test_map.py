@@ -275,6 +275,23 @@ overlap_colors = {
 }
 
 
+def build_category_summary(map_gdf, category_col, category_order):
+    """Create a fixed-order table with tract and agency totals for every map category."""
+    summary = (
+        map_gdf.groupby(category_col, dropna=False)
+        .agg(**{
+            "Tract Count": ("tractid", "nunique"),
+            "Agency Count": ("Agency Count", "sum")
+        })
+        .reindex(category_order, fill_value=0)
+        .reset_index()
+        .rename(columns={category_col: "Category"})
+    )
+    summary["Tract Count"] = summary["Tract Count"].astype(int)
+    summary["Agency Count"] = summary["Agency Count"].round().astype(int)
+    return summary
+
+
 # ==========================================================
 # MAP BOUNDS HELPER
 # ==========================================================
@@ -740,9 +757,23 @@ if map_mode == "SNAP Bivariate Classification":
     for metric_column, category in zip(bivariate_metric_columns, snap_colors.keys()):
         metric_column.metric(category.replace(",", ", "), f"{int(bivariate_counts.get(category, 0)):,}")
 
+    st.dataframe(
+        build_category_summary(gdf, formulation_col, list(snap_colors.keys())),
+        use_container_width=True,
+        hide_index=True
+    )
+
     missing_snap_count = int(gdf[formulation_col].eq("Not Available").sum())
     if missing_snap_count:
         st.caption(f"{missing_snap_count:,} included tract(s) had no SNAP value for {acs_year} and are not part of the four-category count.")
+
+elif map_mode == "LI/LA Classification":
+    st.markdown("#### LI/LA Category Summary")
+    st.dataframe(
+        build_category_summary(gdf, "LI/LA", ["LI/LA", "Not LI/LA", "Not In Data"]),
+        use_container_width=True,
+        hide_index=True
+    )
 
 elif map_mode == "Agency Presence":
     st.markdown("#### Agency Presence Counts")
@@ -751,12 +782,24 @@ elif map_mode == "Agency Presence":
     for metric_column, category in zip(agency_metric_columns, agency_presence_colors.keys()):
         metric_column.metric(category, f"{int(agency_presence_counts.get(category, 0)):,}")
 
+    st.dataframe(
+        build_category_summary(filtered_gdf, "Agency Presence Display", list(agency_presence_colors.keys())),
+        use_container_width=True,
+        hide_index=True
+    )
+
 elif map_mode == "High Need / Visit Increase Overlap":
     st.markdown(f"#### High Need / Visit Increase Counts ({overlap_year})")
     overlap_counts = filtered_gdf["Overlap Category"].value_counts()
     overlap_metric_columns = st.columns(5)
     for metric_column, category in zip(overlap_metric_columns, overlap_colors.keys()):
         metric_column.metric(category, f"{int(overlap_counts.get(category, 0)):,}")
+
+    st.dataframe(
+        build_category_summary(filtered_gdf, "Overlap Category", list(overlap_colors.keys())),
+        use_container_width=True,
+        hide_index=True
+    )
 
 # ==========================================================
 # MAP 2 : VISIT CHANGE MAP
@@ -945,6 +988,12 @@ if need_level_col:
     need_metric_columns = st.columns(4)
     for metric_column, category in zip(need_metric_columns, need_colors.keys()):
         metric_column.metric(category, f"{int(need_counts.get(category, 0)):,}")
+
+    st.dataframe(
+        build_category_summary(gdf, need_level_col, list(need_colors.keys())),
+        use_container_width=True,
+        hide_index=True
+    )
 
     missing_need_count = int(gdf[need_level_col].eq("Not Available").sum())
     if missing_need_count:
