@@ -49,25 +49,137 @@ df, agency_df, tracts = load_data()
 
 
 # ==========================================================
-# CLEAN DATA
+# CLEAN, EXCLUDE, AND RECALCULATE DATA
 # ==========================================================
 
-df["tractid"] = df["tractid"].astype(str).str.zfill(11)
+required_columns = [
+    "tractid",
+    "County",
+    "Agency Count",
+    "SNAP Participant Count 2022",
+    "SNAP Participant Count 2023",
+    "Average Increase in Visit",
+    "LI/LA",
+    "Excluded from Service Region"
+]
+missing_columns = [col for col in required_columns if col not in df.columns]
+if missing_columns:
+    st.error(f"Missing required columns in Sheet3: {', '.join(missing_columns)}")
+    st.stop()
+
+df["tractid"] = df["tractid"].astype(str).str.replace(r"\.0$", "", regex=True).str.zfill(11)
 tracts["GEOID"] = tracts["GEOID"].astype(str)
 
-gdf = tracts.merge(df, left_on="GEOID", right_on="tractid", how="inner")
-gdf = gdf.to_crs(epsg=4326)
+excluded_flag = (
+    df["Excluded from Service Region"]
+    .astype(str)
+    .str.strip()
+    .str.lower()
+    .isin(["1", "1.0", "true", "yes", "y"])
+)
+excluded_tract_count = int(excluded_flag.sum())
+df = df.loc[~excluded_flag].copy()
+
+gdf = tracts.merge(df, left_on="GEOID", right_on="tractid", how="inner").to_crs(epsg=4326)
+
+if gdf.empty:
+    st.error("No tracts remain after applying the service-region exclusion field.")
+    st.stop()
+
+gdf["Agency Count"] = pd.to_numeric(gdf["Agency Count"], errors="coerce").fillna(0)
+gdf["Agency Presence"] = np.where(gdf["Agency Count"] > 0, "Agency Presence", "No Agency Presence")
+gdf["Agency Presency"] = (gdf["Agency Count"] > 0).astype(int)
+
+
+def calculate_neighbor_agency_status(service_gdf):
+    """Return True when a tract without an agency touches an included tract that has one."""
+    agency_present = service_gdf["Agency Count"].gt(0)
+    spatial_index = service_gdf.sindex
+    output = pd.Series(False, index=service_gdf.index, dtype=bool)
+
+    for idx, geometry in service_gdf.geometry.items():
+        if agency_present.loc[idx] or geometry is None or geometry.is_empty:
+            continue
+        candidate_positions = spatial_index.query(geometry, predicate="touches")
+        candidate_indices = service_gdf.index.take(candidate_positions)
+        candidate_indices = candidate_indices[candidate_indices != idx]
+        output.loc[idx] = bool(agency_present.reindex(candidate_indices, fill_value=False).any())
+
+    return output
+
+
+gdf["Neighboring Agency Coverage"] = calculate_neighbor_agency_status(gdf)
+
+
+def recalculate_year_fields(service_gdf, year):
+    """Recalculate all year-dependent classifications from included tracts only."""
+    snap_col = f"SNAP Participant Count {year}"
+    above_col = f"Above SNAP Median {year}"
+    formulation_col_year = f"Formulation {year}"
+    need_col = f"Need Level {year}"
+
+    service_gdf[snap_col] = pd.to_numeric(service_gdf[snap_col], errors="coerce")
+    snap_median = service_gdf[snap_col].median(skipna=True)
+    has_snap = service_gdf[snap_col].notna()
+    above_median = has_snap & service_gdf[snap_col].gt(snap_median)
+
+    service_gdf[above_col] = np.select(
+        [~has_snap, above_median],
+        ["Not Available", "Above SNAP Median"],
+        default="Below SNAP Median"
+    )
+    service_gdf[formulation_col_year] = np.select(
+        [
+            ~has_snap,
+            above_median & service_gdf["Agency Count"].eq(0),
+            above_median & service_gdf["Agency Count"].gt(0),
+            ~above_median & service_gdf["Agency Count"].eq(0)
+        ],
+        [
+            "Not Available",
+            "Above SNAP Median,No Agency Presence",
+            "Above SNAP Median,Agency Presence",
+            "Below SNAP Median,No Agency Presence"
+        ],
+        default="Below SNAP Median,Agency Presence"
+    )
+    service_gdf[need_col] = np.select(
+        [
+            service_gdf["Agency Count"].gt(0),
+            service_gdf["Neighboring Agency Coverage"],
+            ~has_snap,
+            above_median
+        ],
+        ["Has Agency", "Neighboring Agency", "Not Available", "High Need"],
+        default="Moderate Need"
+    )
+
+    return snap_median
+
+
+snap_medians = {year: recalculate_year_fields(gdf, year) for year in ["2022", "2023"]}
+gdf["Above SNAP and No Agency Coverage"] = (
+    gdf["Above SNAP Median 2022"].eq("Above SNAP Median") &
+    gdf["Agency Count"].eq(0)
+).astype(int)
+gdf["Quadrant"] = gdf["Formulation 2022"]
 
 # Fix mixed type issues
-gdf["LI/LA"] = gdf["LI/LA"].astype(str)
+gdf["LI/LA"] = gdf["LI/LA"].astype(str).str.strip().str.lower()
 # ==========================================================
 # FIX LI/LA LABELS (ONLY CHANGE)
 # ==========================================================
 gdf["LI/LA"] = gdf["LI/LA"].replace({
     "1": "LI/LA",
-    "0": "Not LI/LA"
+    "1.0": "LI/LA",
+    "0": "Not LI/LA",
+    "0.0": "Not LI/LA",
+    "nan": "Not In Data",
+    "none": "Not In Data",
+    "not in data": "Not In Data",
+    "not in database": "Not In Data"
 })
-gdf["Average Increase in Visit"] = gdf["Average Increase in Visit"].astype(str)
+gdf["Average Increase in Visit"] = gdf["Average Increase in Visit"].fillna("No Agency").astype(str).str.strip()
 
 # Need level columns may or may not exist for both years
 for col in ["Need Level 2022", "Need Level 2023"]:
@@ -79,11 +191,21 @@ for col in ["Need Level 2022", "Need Level 2023"]:
 # CREATE AGENCY POINT DATA
 # ==========================================================
 
+agency_df["lat"] = pd.to_numeric(agency_df["lat"], errors="coerce")
+agency_df["long"] = pd.to_numeric(agency_df["long"], errors="coerce")
+agency_df = agency_df.dropna(subset=["lat", "long"]).copy()
+
 agency_gdf = gpd.GeoDataFrame(
     agency_df,
     geometry=gpd.points_from_xy(agency_df["long"], agency_df["lat"]),
     crs="EPSG:4326"
 )
+
+try:
+    service_area = gdf.geometry.union_all()
+except AttributeError:
+    service_area = gdf.geometry.unary_union
+agency_gdf = agency_gdf[agency_gdf.geometry.intersects(service_area)].copy()
 
 
 # ==========================================================
@@ -201,6 +323,11 @@ def save_feedback_to_github(name: str, comment: str) -> None:
 # ==========================================================
 
 st.title("Bivariate Classification Visualization")
+st.caption(
+    f"Service-region calculations use {len(gdf):,} included tracts. "
+    f"{excluded_tract_count:,} tract(s) marked 'Excluded from Service Region = 1' were removed. "
+    f"Recalculated SNAP medians — 2022: {snap_medians['2022']:,.0f}; 2023: {snap_medians['2023']:,.0f}."
+)
 
 
 # ==========================================================
