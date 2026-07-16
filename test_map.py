@@ -13,6 +13,7 @@ from streamlit_folium import st_folium
 import numpy as np
 import requests
 import base64
+import re
 from datetime import datetime
 
 
@@ -34,10 +35,14 @@ def load_data():
     agency_df = pd.read_excel(excel_file, sheet_name="Agency_Data")
     tracts = gpd.read_file(shapefile)
 
-    # Clean column names from Excel
-    df.columns = df.columns.str.strip()
-    agency_df.columns = agency_df.columns.str.strip()
-    tracts.columns = tracts.columns.str.strip()
+    # Clean invisible Excel spaces, tabs, and line breaks from column names
+    def clean_headers(frame):
+        frame.columns = [re.sub(r"\s+", " ", str(col).replace("\xa0", " ")).strip() for col in frame.columns]
+        return frame
+
+    df = clean_headers(df)
+    agency_df = clean_headers(agency_df)
+    tracts = clean_headers(tracts)
 
     # Optional: simplify geometry for faster rendering
     tracts["geometry"] = tracts["geometry"].simplify(0.0005)
@@ -62,9 +67,35 @@ required_columns = [
     "LI/LA",
     "Excluded from Service Region"
 ]
+
+
+def normalized_header(value):
+    """Normalize a header so harmless Excel formatting and punctuation do not prevent matching."""
+    return re.sub(r"[^a-z0-9]+", "", str(value).replace("\xa0", " ").lower())
+
+
+# Match the exclusion field even if Excel contains hidden whitespace, line breaks,
+# punctuation differences, or the common accidental spelling "Excluded ffrom ...".
+header_lookup = {normalized_header(col): col for col in df.columns}
+exclusion_aliases = [
+    "Excluded from Service Region",
+    "Excluded ffrom Service Region",
+    "Exclude from Service Region",
+    "Excluded Service Region"
+]
+exclusion_source = next(
+    (header_lookup[normalized_header(alias)] for alias in exclusion_aliases if normalized_header(alias) in header_lookup),
+    None
+)
+if exclusion_source is not None and exclusion_source != "Excluded from Service Region":
+    df = df.rename(columns={exclusion_source: "Excluded from Service Region"})
+
 missing_columns = [col for col in required_columns if col not in df.columns]
 if missing_columns:
-    st.error(f"Missing required columns in Sheet3: {', '.join(missing_columns)}")
+    st.error(
+        f"Missing required columns in Sheet3: {', '.join(missing_columns)}. "
+        f"Headers found: {', '.join(map(str, df.columns))}"
+    )
     st.stop()
 
 df["tractid"] = df["tractid"].astype(str).str.replace(r"\.0$", "", regex=True).str.zfill(11)
