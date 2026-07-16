@@ -317,8 +317,8 @@ def get_lila_color(val: str) -> str:
     if val.lower() in ["not in data", "not in database"]:
         return "#e0e0e0"
     if val == "LI/LA":
-        return "#8b0000"   # LI/LA = deep red
-    return "#00a651"       # Not LI/LA = pure green
+        return "#e5513f"   # Must match the LI/LA legend
+    return "#defd93"       # Must match the Not LI/LA legend
 
 def save_feedback_to_github(name: str, comment: str) -> None:
     token = st.secrets["GITHUB_TOKEN"]
@@ -771,6 +771,45 @@ elif map_mode == "LI/LA Classification":
     st.markdown("#### LI/LA Category Summary")
     st.dataframe(
         build_category_summary(gdf, "LI/LA", ["LI/LA", "Not LI/LA", "Not In Data"]),
+        use_container_width=True,
+        hide_index=True
+    )
+
+    lila_hotspot_year = st.selectbox("Select year for need-level and LI/LA overlap", ["2022", "2023"], index=1)
+    lila_need_col = f"Need Level {lila_hotspot_year}"
+    underserved_tracts = gdf[gdf[lila_need_col].isin(["High Need", "Moderate Need"])].copy()
+    lila_overlap_tracts = underserved_tracts[underserved_tracts["LI/LA"].eq("LI/LA")].copy()
+    underserved_total = len(underserved_tracts)
+    lila_overlap_count = len(lila_overlap_tracts)
+    lila_overlap_pct = 100 * lila_overlap_count / underserved_total if underserved_total else 0
+
+    overlap_rows = []
+    for need_category in ["High Need", "Moderate Need"]:
+        category_tracts = underserved_tracts[underserved_tracts[lila_need_col].eq(need_category)]
+        category_overlap = category_tracts[category_tracts["LI/LA"].eq("LI/LA")]
+        category_total = len(category_tracts)
+        overlap_rows.append({
+            "Need Category": need_category,
+            "Total Tracts": category_total,
+            "Also LI/LA": len(category_overlap),
+            "Overlap Percent": round(100 * len(category_overlap) / category_total, 1) if category_total else 0
+        })
+    overlap_rows.append({
+        "Need Category": "High + Moderate Need",
+        "Total Tracts": underserved_total,
+        "Also LI/LA": lila_overlap_count,
+        "Overlap Percent": round(lila_overlap_pct, 1)
+    })
+    lila_overlap_table = pd.DataFrame(overlap_rows)
+
+    st.markdown(f"#### Need-Level Overlap with LI/LA ({lila_hotspot_year})")
+    lila_metric_columns = st.columns(3)
+    lila_metric_columns[0].metric("High/Moderate Need Tracts", f"{underserved_total:,}")
+    lila_metric_columns[1].metric("Also LI/LA", f"{lila_overlap_count:,}")
+    lila_metric_columns[2].metric("Overlap Share", f"{lila_overlap_pct:.1f}%")
+    st.caption("This compares the need-level classification with LI/LA; LI/LA is not part of the High Need or Moderate Need definition.")
+    st.dataframe(
+        lila_overlap_table,
         use_container_width=True,
         hide_index=True
     )
