@@ -109,15 +109,16 @@ excluded_flag = (
     .isin(["1", "1.0", "true", "yes", "y"])
 )
 excluded_tract_count = int(excluded_flag.sum())
-df = df.loc[~excluded_flag].copy()
+df["Excluded Flag"] = excluded_flag
 
-gdf = tracts.merge(df, left_on="GEOID", right_on="tractid", how="inner").to_crs(epsg=4326)
+all_gdf = tracts.merge(df, left_on="GEOID", right_on="tractid", how="inner").to_crs(epsg=4326)
+all_gdf["Agency Count"] = pd.to_numeric(all_gdf["Agency Count"], errors="coerce").fillna(0)
+gdf = all_gdf.loc[~all_gdf["Excluded Flag"]].copy()
 
 if gdf.empty:
     st.error("No tracts remain after applying the service-region exclusion field.")
     st.stop()
 
-gdf["Agency Count"] = pd.to_numeric(gdf["Agency Count"], errors="coerce").fillna(0)
 gdf["Agency Presence"] = np.where(gdf["Agency Count"] > 0, "Agency Presence", "No Agency Presence")
 gdf["Agency Presency"] = (gdf["Agency Count"] > 0).astype(int)
 
@@ -230,13 +231,6 @@ agency_gdf = gpd.GeoDataFrame(
     crs="EPSG:4326"
 )
 
-try:
-    service_area = gdf.geometry.union_all()
-except AttributeError:
-    service_area = gdf.geometry.unary_union
-agency_gdf = agency_gdf[agency_gdf.geometry.intersects(service_area)].copy()
-
-
 # ==========================================================
 # COLOR DEFINITIONS
 # ==========================================================
@@ -264,6 +258,20 @@ need_colors = {
     "Neighboring Agency": "#9ac2bf",
     "High Need": "#d77c7b",
     "Moderate Need": "#e8a663"
+}
+
+agency_presence_colors = {
+    "Agency Presence": "#a6f36f",
+    "No Agency Presence": "#ffffff",
+    "Excluded from Service Region": "#bdbdbd"
+}
+
+overlap_colors = {
+    "High Need + Increased Visits": "#7b3294",
+    "High Need Only": "#df7f7f",
+    "Increased Visits Only": "#86b978",
+    "Neither": "#c9c5c3",
+    "Excluded from Service Region": "#6f6f6f"
 }
 
 
@@ -363,14 +371,16 @@ st.caption(
 # MAP 1 : SNAP / LI-LA / SNAP POPULATION
 # ==========================================================
 
-st.subheader("SNAP / LI-LA Map")
+st.subheader("Service Region Classification Map")
 
 map_mode = st.selectbox(
     "Select map visualization",
     [
         "SNAP Bivariate Classification",
         "LI/LA Classification",
-        "SNAP Population"
+        "SNAP Population",
+        "Agency Presence",
+        "High Need / Visit Increase Overlap"
     ]
 )
 
@@ -403,6 +413,44 @@ elif map_mode == "SNAP Population":
     snap_year = st.selectbox("Select SNAP Year", ["2022", "2023"])
     snap_col = f"SNAP Participant Count {snap_year}"
     filtered_gdf = gdf.copy()
+
+elif map_mode == "Agency Presence":
+    filtered_gdf = all_gdf.copy()
+    filtered_gdf["Agency Presence Display"] = np.select(
+        [filtered_gdf["Excluded Flag"], filtered_gdf["Agency Count"].gt(0)],
+        ["Excluded from Service Region", "Agency Presence"],
+        default="No Agency Presence"
+    )
+    filtered_gdf["color"] = filtered_gdf["Agency Presence Display"].map(agency_presence_colors)
+
+elif map_mode == "High Need / Visit Increase Overlap":
+    overlap_year = st.selectbox("Select overlap-map year", ["2022", "2023"], index=1)
+    overlap_formulation_col = f"Formulation {overlap_year}"
+    overlap_source = all_gdf.copy()
+    overlap_source = overlap_source.drop(columns=[overlap_formulation_col], errors="ignore").merge(
+        gdf[["tractid", overlap_formulation_col]],
+        on="tractid",
+        how="left"
+    )
+    is_high_need = overlap_source[overlap_formulation_col].eq("Above SNAP Median,No Agency Presence")
+    has_increase = overlap_source["Average Increase in Visit"].astype(str).str.strip().str.lower().eq("increase")
+    overlap_source["Overlap Category"] = np.select(
+        [
+            overlap_source["Excluded Flag"],
+            is_high_need & has_increase,
+            is_high_need,
+            has_increase
+        ],
+        [
+            "Excluded from Service Region",
+            "High Need + Increased Visits",
+            "High Need Only",
+            "Increased Visits Only"
+        ],
+        default="Neither"
+    )
+    overlap_source["color"] = overlap_source["Overlap Category"].map(overlap_colors)
+    filtered_gdf = overlap_source
 
 else:
     selected = st.multiselect(
@@ -545,15 +593,36 @@ else:
             "fillOpacity": 0.7
         }
 
+    main_tooltip_fields = ["County", "tractid", "Agency Count", "Average Increase in Visit"]
+    main_tooltip_aliases = ["County:", "Tract:", "Agency Count:", "Visit Change:"]
+    if map_mode == "Agency Presence":
+        main_tooltip_fields.append("Agency Presence Display")
+        main_tooltip_aliases.append("Classification:")
+    elif map_mode == "High Need / Visit Increase Overlap":
+        main_tooltip_fields.extend([f"SNAP Participant Count {overlap_year}", "Overlap Category"])
+        main_tooltip_aliases.extend([f"SNAP Participants ({overlap_year}):", "Overlap Classification:"])
+
     folium.GeoJson(
         filtered_gdf,
         style_function=style_function,
         tooltip=folium.GeoJsonTooltip(
-            fields=["County", "tractid", "Agency Count", "Average Increase in Visit"],
-            aliases=["County:", "Tract:", "Agency Count:", "Visit Change:"],
+            fields=main_tooltip_fields,
+            aliases=main_tooltip_aliases,
             sticky=True
         )
     ).add_to(m)
+
+    if map_mode in ["Agency Presence", "High Need / Visit Increase Overlap"]:
+        county_outlines = filtered_gdf.dissolve(by="County")
+        folium.GeoJson(
+            county_outlines,
+            style_function=lambda feature: {
+                "fillOpacity": 0,
+                "color": "#4a4a4a",
+                "weight": 1.2
+            },
+            interactive=False
+        ).add_to(m)
 
     # ------------------ Legends ------------------
     if map_mode == "SNAP Bivariate Classification":
@@ -615,6 +684,31 @@ else:
         """
         m.get_root().html.add_child(folium.Element(legend_html))
 
+    elif map_mode == "Agency Presence":
+        legend_items = "".join(
+            f'<div style="margin-bottom:4px;"><i style="background:{color};border:1px solid #666;width:15px;height:15px;display:inline-block;margin-right:6px;"></i>{category}</div>'
+            for category, color in agency_presence_colors.items()
+        )
+        legend_html = f"""
+        <div style="position:fixed;bottom:30px;left:40px;width:250px;background:white;border:2px solid grey;z-index:9999;font-size:14px;padding:10px;">
+        <b>Agency Presence</b><br><br>{legend_items}
+        <div style="margin-top:5px;"><i style="background:black;border-radius:50%;width:7px;height:7px;display:inline-block;margin:0 10px 1px 4px;"></i>Agency</div>
+        </div>
+        """
+        m.get_root().html.add_child(folium.Element(legend_html))
+
+    elif map_mode == "High Need / Visit Increase Overlap":
+        legend_items = "".join(
+            f'<div style="margin-bottom:4px;"><i style="background:{color};border:1px solid #666;width:15px;height:15px;display:inline-block;margin-right:6px;"></i>{category}</div>'
+            for category, color in overlap_colors.items()
+        )
+        legend_html = f"""
+        <div style="position:fixed;bottom:30px;left:40px;width:280px;background:white;border:2px solid grey;z-index:9999;font-size:14px;padding:10px;">
+        <b>High Need / Visit Increase ({overlap_year})</b><br><br>{legend_items}
+        </div>
+        """
+        m.get_root().html.add_child(folium.Element(legend_html))
+
 
 # ==========================================================
 # ADD AGENCY POINTS (ONCE, BEFORE RENDER)
@@ -649,6 +743,20 @@ if map_mode == "SNAP Bivariate Classification":
     missing_snap_count = int(gdf[formulation_col].eq("Not Available").sum())
     if missing_snap_count:
         st.caption(f"{missing_snap_count:,} included tract(s) had no SNAP value for {acs_year} and are not part of the four-category count.")
+
+elif map_mode == "Agency Presence":
+    st.markdown("#### Agency Presence Counts")
+    agency_presence_counts = filtered_gdf["Agency Presence Display"].value_counts()
+    agency_metric_columns = st.columns(3)
+    for metric_column, category in zip(agency_metric_columns, agency_presence_colors.keys()):
+        metric_column.metric(category, f"{int(agency_presence_counts.get(category, 0)):,}")
+
+elif map_mode == "High Need / Visit Increase Overlap":
+    st.markdown(f"#### High Need / Visit Increase Counts ({overlap_year})")
+    overlap_counts = filtered_gdf["Overlap Category"].value_counts()
+    overlap_metric_columns = st.columns(5)
+    for metric_column, category in zip(overlap_metric_columns, overlap_colors.keys()):
+        metric_column.metric(category, f"{int(overlap_counts.get(category, 0)):,}")
 
 # ==========================================================
 # MAP 2 : VISIT CHANGE MAP
