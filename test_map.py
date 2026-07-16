@@ -122,24 +122,21 @@ gdf["Agency Presence"] = np.where(gdf["Agency Count"] > 0, "Agency Presence", "N
 gdf["Agency Presency"] = (gdf["Agency Count"] > 0).astype(int)
 
 
-def calculate_neighbor_agency_status(service_gdf):
-    """Return True when a tract without an agency touches an included tract that has one."""
-    agency_present = service_gdf["Agency Count"].gt(0)
-    spatial_index = service_gdf.sindex
-    output = pd.Series(False, index=service_gdf.index, dtype=bool)
-
-    for idx, geometry in service_gdf.geometry.items():
-        if agency_present.loc[idx] or geometry is None or geometry.is_empty:
-            continue
-        candidate_positions = spatial_index.query(geometry, predicate="touches")
-        candidate_indices = service_gdf.index.take(candidate_positions)
-        candidate_indices = candidate_indices[candidate_indices != idx]
-        output.loc[idx] = bool(agency_present.reindex(candidate_indices, fill_value=False).any())
-
-    return output
+def normalize_need_label(series):
+    return series.fillna("").astype(str).str.strip().str.lower().str.replace(r"\s+", " ", regex=True)
 
 
-gdf["Neighboring Agency Coverage"] = calculate_neighbor_agency_status(gdf)
+# Preserve each year's existing Has Agency/Neighboring Agency assignments exactly.
+# Only rows previously labeled High Need or Moderate Need may switch categories.
+for year in ["2022", "2023"]:
+    need_col = f"Need Level {year}"
+    preserved_col = f"Preserved Coverage {year}"
+    existing_need = normalize_need_label(gdf[need_col]) if need_col in gdf.columns else pd.Series("", index=gdf.index)
+    gdf[preserved_col] = np.select(
+        [existing_need.eq("has agency"), existing_need.eq("neighboring agency")],
+        ["Has Agency", "Neighboring Agency"],
+        default=""
+    )
 
 
 def recalculate_year_fields(service_gdf, year):
@@ -148,6 +145,7 @@ def recalculate_year_fields(service_gdf, year):
     above_col = f"Above SNAP Median {year}"
     formulation_col_year = f"Formulation {year}"
     need_col = f"Need Level {year}"
+    preserved_col = f"Preserved Coverage {year}"
 
     service_gdf[snap_col] = pd.to_numeric(service_gdf[snap_col], errors="coerce")
     snap_median = service_gdf[snap_col].median(skipna=True)
@@ -176,8 +174,8 @@ def recalculate_year_fields(service_gdf, year):
     )
     service_gdf[need_col] = np.select(
         [
-            service_gdf["Agency Count"].gt(0),
-            service_gdf["Neighboring Agency Coverage"],
+            service_gdf[preserved_col].eq("Has Agency"),
+            service_gdf[preserved_col].eq("Neighboring Agency"),
             ~has_snap,
             above_median
         ],
@@ -381,6 +379,7 @@ map_mode = st.selectbox(
 # ----------------------------------------------------------
 
 formulation_col = None
+acs_year = None
 filtered_gdf = gdf.copy()
 
 if map_mode == "SNAP Bivariate Classification":
@@ -640,6 +639,17 @@ for _, row in agency_gdf.iterrows():
 
 st_folium(m, height=750, use_container_width=True)
 
+if map_mode == "SNAP Bivariate Classification":
+    st.markdown(f"#### SNAP Bivariate Classification Counts ({acs_year})")
+    bivariate_counts = gdf[formulation_col].value_counts()
+    bivariate_metric_columns = st.columns(4)
+    for metric_column, category in zip(bivariate_metric_columns, snap_colors.keys()):
+        metric_column.metric(category.replace(",", ", "), f"{int(bivariate_counts.get(category, 0)):,}")
+
+    missing_snap_count = int(gdf[formulation_col].eq("Not Available").sum())
+    if missing_snap_count:
+        st.caption(f"{missing_snap_count:,} included tract(s) had no SNAP value for {acs_year} and are not part of the four-category count.")
+
 # ==========================================================
 # MAP 2 : VISIT CHANGE MAP
 # ==========================================================
@@ -725,7 +735,8 @@ st_folium(m2, height=750, use_container_width=True)
 
 st.subheader("Food Access Need Map")
 
-need_level_col = "Need Level 2023" if "Need Level 2023" in gdf.columns else None
+need_year = st.selectbox("Select need-map year", ["2022", "2023"], index=1)
+need_level_col = f"Need Level {need_year}" if f"Need Level {need_year}" in gdf.columns else None
 
 if need_level_col:
     gdf["need_color"] = gdf[need_level_col].map(need_colors).fillna("#cccccc")
@@ -745,8 +756,8 @@ if need_level_col:
         "County",
         "tractid",
         "Agency Count",
-        "SNAP Participant Count 2023",
-        "Above SNAP Median 2023",
+        f"SNAP Participant Count {need_year}",
+        f"Above SNAP Median {need_year}",
         need_level_col
     ]
 
@@ -820,6 +831,16 @@ if need_level_col:
 
     m3.get_root().html.add_child(folium.Element(legend3))
     st_folium(m3, height=750, use_container_width=True)
+
+    st.markdown(f"#### Food Access Need Counts ({need_year})")
+    need_counts = gdf[need_level_col].value_counts()
+    need_metric_columns = st.columns(4)
+    for metric_column, category in zip(need_metric_columns, need_colors.keys()):
+        metric_column.metric(category, f"{int(need_counts.get(category, 0)):,}")
+
+    missing_need_count = int(gdf[need_level_col].eq("Not Available").sum())
+    if missing_need_count:
+        st.caption(f"{missing_need_count:,} included tract(s) had no SNAP value for {need_year} and are not part of the four-category count.")
 else:
     st.info("Need level columns were not found in the uploaded data.")
 
